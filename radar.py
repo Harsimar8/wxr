@@ -196,27 +196,42 @@ def hail_cells(weather, freezing_ft):
     weakening above the freezing level as the radar picture. Hail when that
     point is at least HAIL_ABOVE_FREEZING_FT above the freezing level.
 
-    Returns a list of dicts: x, y (NM), h45 (ft MSL, highest 45 dBZ point).
+    With cloud shapes: only real storms (Cumulonimbus clouds), their top is
+    the highest cloud, and the icon goes on the storm's core. With weather
+    stations: each storm is judged by the freezing level of its own area.
+
+    Returns a list of dicts: x, y (NM), h45 (ft MSL, highest 45 dBZ point),
+    fz (ft MSL, the freezing level used).
     """
     if freezing_ft is None:
         return []                   # freezing level unknown: no hail guess
+    clouds = getattr(weather, "using_clouds", lambda: False)()
+    area_fz = getattr(weather, "freezing_at", None)
     out = []
     for item in getattr(weather, "volumes", []):
         v = item["data"]
         base, top = v.get("base-altitude-ft"), v.get("top-altitude-ft")
         if v.get("rain-flag") != 1 or base is None or top is None or top <= base:
             continue
+        x, y = item["x"], item["y"]
+        if clouds:
+            info = item.get("cloud")
+            if info is None or not info["storm"]:
+                continue            # hail only comes from real storms
+            top = max(top, info["top"])
+            x, y = info["core"]
+        fz = freezing_ft if area_fz is None else area_fz(x, y)
         rain = max(0.0, min(1.0, v.get("rain") or 0.0))
         core = 0.15 + 1.05 * rain
         h = np.arange(base, top + 1.0, 100.0)
         refl = np.full(h.shape, core)
         if getattr(weather, "realistic", False):
-            refl = refl - top_fade(h, base, top, rain, freezing_ft)
+            refl = refl - top_fade(h, base, top, rain, fz)
         dbz = np.where(refl > 0.01, to_dbz(np.maximum(refl, 0.01)), -99.0)
-        dbz = dbz + np.where(h > freezing_ft, ICE_DB, 0.0)
+        dbz = dbz + np.where(h > fz, ICE_DB, 0.0)
         strong = h[dbz >= HAIL_DBZ]
-        if strong.size and strong.max() >= freezing_ft + HAIL_ABOVE_FREEZING_FT:
-            out.append({"x": item["x"], "y": item["y"], "h45": float(strong.max())})
+        if strong.size and strong.max() >= fz + HAIL_ABOVE_FREEZING_FT:
+            out.append({"x": x, "y": y, "h45": float(strong.max()), "fz": float(fz)})
     return out
 
 
@@ -247,8 +262,13 @@ class RadarScanner:
 
     def scan(self, weather, ax, ay, heading, range_nm, alt_ft=25000.0,
              ground_ft=0.0, tilt_deg=0.0, gain_db=0.0, mode="WX",
-             attenuation=True, freezing_ft=None, terrain=None, rays=None):
+             attenuation=True, freezing_ft=None, terrain=None, rays=None,
+             snow_colors="off"):
         """Scan the whole arc. Returns uint8 levels, shape (n_rays, n_bins).
+
+        snow_colors: "off" = real radar (rain and snow by strength only),
+        "data" = cyan/white where the weather data says snow,
+        "freezing" = cyan above the freezing level, white just below it.
 
         freezing_ft: freezing level (ft MSL). Above it rain is ice and echoes
         weaker; just below it, melting snow echoes stronger (bright band).
@@ -289,13 +309,20 @@ class RadarScanner:
             known = np.zeros(shape, bool)
             floor = np.zeros(shape)
 
+        # Freezing level on the same scale as the beam heights. With weather
+        # stations it differs from area to area (one value per point).
         fz = None if freezing_ft is None else freezing_ft - ground_ft
+        area_fz = getattr(weather, "freezing_at", None)
+        if fz is not None and area_fz is not None:
+            fz = np.broadcast_to(np.asarray(area_fz(X, Y), float) - ground_ft, shape)
 
-        def phase(h):
-            """Rain echo change with height: ice -7 dB, melting layer +5 dB."""
+        def phase(h, sel=None):
+            """Rain echo change with height: ice -7 dB, melting layer +5 dB.
+            sel: the points h belongs to, when h is only some of them."""
             if fz is None:
                 return 1.0
-            return np.where(h > fz, 0.2, np.where(h > fz - 1000.0, 3.16, 1.0))
+            f = fz[sel] if (sel is not None and np.ndim(fz)) else fz
+            return np.where(h > f, 0.2, np.where(h > f - 1000.0, 3.16, 1.0))
 
         fg_field = getattr(weather, "precipitation_field", None)
         z_rain = np.zeros(shape)
@@ -320,7 +347,7 @@ class RadarScanner:
                 prof = storm_profile_db(q, hm - fm)   # storms grow from the local ground
                 ok = np.isfinite(prof)
                 part = w * np.where(ok, 10.0 ** (np.where(ok, prof, 0) / 10.0), 0)
-                seen_r += part * phase(hm)
+                seen_r += part * phase(hm, m)
                 seen_s += part
                 hits += w * ok
             for share, seen, out in ((rain_mult, seen_r, z_rain), (snow_mult, seen_s, z_snow)):
@@ -394,12 +421,30 @@ class RadarScanner:
             self.ground_mask[i0:i1] = ((levels > 0) & ground_wins)[keep]
             return levels[keep]
 
-        for i, band in enumerate(DBZ_BANDS, start=1):
-            levels[rain_dbz >= band] = i
-        snow_detected = snow_dbz >= DBZ_BANDS[0]
-        rain_detected = levels > 0
-        levels[snow_detected & ~rain_detected] = 5
-        levels[snow_detected & rain_detected & (levels < 4)] = 6
+        if snow_colors == "data":
+            # Teaching colours from the weather data (FlightGear / METAR says
+            # snow). A real radar cannot know this.
+            for i, band in enumerate(DBZ_BANDS, start=1):
+                levels[rain_dbz >= band] = i
+            snow_detected = snow_dbz >= DBZ_BANDS[0]
+            rain_detected = levels > 0
+            levels[snow_detected & ~rain_detected] = 5
+            levels[snow_detected & rain_detected & (levels < 4)] = 6
+        else:
+            # Real radar: one echo, coloured only by its strength. Snow and
+            # rain look the same (dry snow is just weaker).
+            total_dbz = z_to_dbz(z_rg + z_snow) + speckle
+            for i, band in enumerate(DBZ_BANDS, start=1):
+                levels[total_dbz >= band] = i
+            if snow_colors == "freezing" and fz is not None:
+                # Guess from the freezing level, as the pilot does: where the
+                # beam centre is above it the echo is snow/ice (cyan), in the
+                # 1000 ft below it melting snow (white). Red and magenta stay:
+                # a strong echo up there is hail or a violent core.
+                centre = heights[len(heights) // 2]
+                weak = (levels > 0) & (levels < 3)
+                levels[weak & (centre > fz)] = 5
+                levels[weak & (centre <= fz) & (centre > fz - 1000.0)] = 6
         if mode == "WX+T":
             # Doppler measures how fast the drops move, not how strong the echo
             # is, so the gain knob does not change it (Airbus FOBN: "the

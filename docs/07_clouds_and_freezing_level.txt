@@ -1,0 +1,509 @@
+CLOUDS, FREEZING LEVEL, SNOW, HAIL - WHAT WE HAVE AND WHAT WILL CHANGE
+=====================================================================
+
+Contents
+  0. THE WHOLE IDEA IN PICTURES (trees - read this first)
+  1. What FlightGear makes when it builds weather
+  2. What our app uses NOW
+  3. Why volumes are not enough
+  4. How the freezing level is found NOW
+  5. Freezing level: the difference between SNOW and HAIL
+  6. Snow vs hail - what they are, how pilots detect them
+  7. Which weather belongs to storms (and which does not)
+  8. THE CHANGES we will make
+  9. What each change fixes (before -> after)
+ 10. Order of work
+ 11. Things to watch out for
+ 12. What was built
+
+
+0. THE WHOLE IDEA IN PICTURES
+-----------------------------
+
+(a) WHAT FLIGHTGEAR MAKES (Detailed Weather, in every tile)
+    -------------------------------------------------------
+
+  FlightGear builds weather
+     |
+     +-- CLOUDS      what you SEE        -> used for: WHERE, SHAPE, TOP,
+     |                                                STORM or not
+     +-- VOLUMES     what the plane FEELS -> used for: HOW STRONG
+     |   (invisible boxes: rain, snow,               (rain, snow, turbulence)
+     |    turbulence, visibility)
+     +-- STATIONS    temperature, dew     -> used for: FREEZING LEVEL
+     |                point, pressure                 PER AREA
+     +-- wind        per tile             -> (not used yet)
+     +-- thunderstorm list (only some     -> (not used: missing in tropical
+     |   weathers)                            and cold front)
+     +-- lightning                        -> last strike only (as before)
+
+  Basic Weather -> none of this -> app guesses from the METAR (old way)
+
+
+(b) VOLUMES vs CLOUDS
+    ------------------
+
+  Volume says:  "it rains 0.4 somewhere in this 18 km circle"
+     |
+     +-- shape  : perfect circle / square      (not real)
+     +-- place  : rough (a big area)
+     +-- top    : often wrong (1,500 ft or always 20,000 ft)
+     +-- storm? : does not say
+
+  Clouds say:   "these cloud pieces are exactly here, this big, this high,
+                 this type"
+     |
+     +-- shape  : real outline
+     +-- place  : exact (matches the window)
+     +-- top    : real height
+     +-- storm? : YES if a Cumulonimbus is among them
+     +-- rain?  : does NOT say -> strength still from the volume
+
+  So:  CLOUDS + VOLUMES together = best radar picture
+
+
+(c) WHICH WEATHER BELONGS TO STORMS
+    --------------------------------
+
+  Weather
+     |
+     +-- WINDSHEAR (microburst)  -> comes from storms (Cb)  -> needs CLOUDS
+     +-- HAIL                    -> comes from storms (Cb)  -> needs CLOUDS
+     +-- strong TURBULENCE       -> mostly storms            -> needs CLOUDS
+     |
+     +-- SNOW                    -> ANY rain cloud when COLD
+                                    NOT only storms          -> needs
+                                                               TEMPERATURE
+                                                               (stations)
+
+
+(d) SNOW vs HAIL - same line, different question
+    ---------------------------------------------
+
+  Freezing level (0 degC line)
+     |
+     +-- SNOW asks: "is the BEAM above or below the line, HERE?"
+     |      |
+     |      +-- above the line            -> ice/snow: weaker echo, cyan
+     |      +-- 1000 ft below the line    -> melting snow: brighter, white
+     |      +-- further below             -> rain: normal
+     |
+     +-- HAIL asks: "does the STRONG echo (45 dBZ) reach FAR above the line?"
+            |
+            +-- 4,600 ft or more above    -> HAIL icon
+            +-- less                      -> no icon
+            +-- not a storm at all        -> no icon (needs a Cb)
+
+
+(e) HOW A PILOT TELLS SNOW FROM HAIL
+    ---------------------------------
+
+  Echo on the radar
+     |
+     +-- weak, wide, smooth green, cold air      -> probably SNOW
+     |      (check: temperature, METAR "SN", look outside)
+     |
+     +-- strong red/magenta, small, tall
+            |
+            +-- tilt UP: still red high up        -> HAIL likely
+            +-- hook / finger / U / scalloped     -> violent storm, hail
+            +-- hail icon (modern radars)         -> HAIL
+            +-- rule: stay 20 NM away, never fly under the anvil
+
+
+(f) FREEZING LEVEL - before and after
+    ----------------------------------
+
+  BEFORE
+     |
+     +-- ONE value near the plane
+            +-- 1st: FlightGear temperature table (0 degC crossing)
+            +-- 2nd: temperature at the plane - 2 degC per 1000 ft
+            |
+            +-- used for EVERY storm, near or far   (far storms can be wrong)
+
+  AFTER
+     |
+     +-- same value near the plane
+     +-- each area moved up/down by its weather station:
+            near value + (station temp there - station temp here) x 505 ft
+              +-- warmer area -> higher freezing level
+              +-- colder area -> lower freezing level
+     |
+     +-- used per area for: ice, bright band, snow colours, hail, top fade
+
+
+(g) THE PLAN THAT WAS BUILT
+    ------------------------
+
+  Change A - CLOUDS
+     +-- script sends clouds every 5 s
+     +-- app draws echo where clouds are, up to the real top
+     +-- Cb cloud = storm -> only storms get hail, windshear, turbulence
+
+  Change B - WEATHER STATIONS
+     +-- script sends every tile's station every 5 s
+     +-- app gives each area its own freezing level
+
+  Both: switch off in the app -> old behaviour. No data -> old behaviour.
+  (Full before/after details: 08_before_and_after_changes.txt)
+
+
+1. WHAT FLIGHTGEAR MAKES WHEN IT BUILDS WEATHER
+-----------------------------------------------
+FlightGear's Detailed Weather does not make weather for the whole world.
+It makes it in TILES (squares of about 40 x 40 km) around the plane.
+When you fly on, new tiles are made AHEAD and old ones BEHIND are deleted.
+
+        +-----+-----+-----+
+        |tile |tile |tile |
+        +-----+-----+-----+
+        |tile |  P  |tile |     P = plane. About 9 tiles around you.
+        +-----+-----+-----+
+        |tile |tile |tile |
+        +-----+-----+-----+
+
+So the radar has real FlightGear weather only up to about 30-40 NM.
+At 160 / 320 NM range most of the screen is empty, and storms "pop up"
+when a new tile is made.
+
+In EACH tile FlightGear makes (checked in fgdata Nasal\local_weather\):
+
+  Name (in Nasal)          What it is                         Every weather?
+  -----------------------  ---------------------------------  --------------
+  cloudArray               every cloud you SEE: type,         YES
+                           lat, lon, alt, width, height
+  effectVolumeArray        invisible boxes: rain, snow,       YES
+                           turbulence, visibility, lift
+  weatherStationArray      one station per tile: temperature  YES
+                           T, dewpoint D, pressure p, vis
+  tile wind                wind per tile (depends on the      YES (setting)
+                           "wind model" setting)
+  windIpointArray          wind at 9 heights at points        only some wind
+                                                              settings
+  atmosphereIpointArray    cloud layer heights, vis aloft     most
+  thunderstormArray        list of storms + strength          ONLY in
+                           (strength = chance of lightning)   "Thunderstorms"
+                                                              and METAR tiles
+                                                              (NOT tropical,
+                                                              NOT cold front)
+
+These live inside Nasal code, NOT in the property tree. So only a SCRIPT
+(like wxradar_export.nas) can take them out.
+
+
+2. WHAT OUR APP USES NOW
+------------------------
+  Information                         How            Used for
+  ----------------------------------  -------------  --------------------------
+  Volumes (rain, snow, turb boxes)    script         radar colours
+  Cloud positions (only where)        getting        a dot of echo on clouds
+  Plane position/heading/height/speed getting        the plane on the radar
+  Wind at the plane                   getting        storm drift
+  Temperature table (aloft/boundary)  getting        freezing level (ONE value)
+  Temperature at the plane            getting        freezing level (fallback)
+  Last lightning strike               getting        nearest cloud becomes red
+  Terrain + water                     script         MAP mode, ground clutter
+  METAR                               getting        guess when no volumes
+
+
+3. WHY VOLUMES ARE NOT ENOUGH
+-----------------------------
+Volumes DO have a position, but they are made for the PLANE'S EFFECTS
+("you are inside: start rain and shaking"), not to look like a radar.
+Example from volume_current.txt (tile type low_pressure):
+
+   volumes 1,3,6 : 28 x 28 km SQUARE box, rain 0.1 everywhere -> green square
+   volumes 4,7   : 18 km CIRCLE, rain 0.4 everywhere          -> yellow disc
+   volumes 0,2,5 : 36 x 36 km box, no rain (visibility only)  -> nothing
+
+Problems:
+  1. Wrong SHAPE  - real rain is never a perfect square or circle.
+  2. FLAT strength - same rain everywhere, no red core in the middle.
+  3. ROUGH place  - "it rains somewhere in this big box", not where the
+                    actual clouds are. Radar may not match the window.
+  4. Wrong HEIGHT - tops like 1500 ft or 13700 ft do not show the real
+                    storm top.
+
+   Volume (box):                    Clouds inside it:
+   +------------------+             +------------------+
+   |                  |             |  oo         o    |
+   |   rain 0.1       |             |  ooo             |
+   |   everywhere     |             |          oo      |
+   |                  |             |    o     ooo     |
+   +------------------+             +------------------+
+   radar: flat square               real rain: only under the clouds
+
+Clouds tell WHERE + SHAPE + HEIGHT. Volumes tell HOW STRONG.
+Best: use BOTH.
+
+
+4. HOW THE FREEZING LEVEL IS FOUND NOW
+--------------------------------------
+Code: basic_weather.py freezing_level_ft()
+
+  Way 1 - FlightGear's temperature table (fg_link.py reads it):
+            /environment/config/aloft/entry[0..4]/temperature-degc
+            /environment/config/boundary/entry[0..1]/temperature-degc
+          Find the height where temperature crosses 0 degC:
+
+              12000 ft   -6 degC
+               8000 ft   +2 degC   -> 0 degC between them -> about 9000 ft
+
+  Way 2 - no table: temperature at the plane, air is about 2 degC colder
+          every 1000 ft:
+              plane 5000 ft, +8 degC -> 8 / 2 = 4 -> 4000 ft higher
+              -> freezing level about 9000 ft
+
+PROBLEM: ONE freezing level for the WHOLE radar.
+
+   Storm A (40 NM north)        PLANE        Storm B (30 NM south)
+   real freezing 7000 ft                     real freezing 11000 ft
+   app uses ONE value (near the plane, e.g. 9000 ft) for BOTH.
+
+
+5. FREEZING LEVEL: THE DIFFERENCE BETWEEN SNOW AND HAIL
+-------------------------------------------------------
+Same line (0 degC), but a DIFFERENT QUESTION.
+
+   height
+     |            +---+  storm top
+     |            |###|  <- 45 dBZ reaches HERE
+     |            |###|     ^
+     |            |###|     | 4600 ft or more?  -> HAIL
+     | - - - - - -|###|- - -v- - - - - -  FREEZING LEVEL (0 degC)
+     |   .........|###|
+     |   .........|###|     dots = beam just above/below the line -> SNOW
+     +------------------------- ground   colours / bright band
+
+                 SNOW asks                      HAIL asks
+  ------------   -----------------------------  ------------------------------
+  Question       Is the BEAM above or below     HOW FAR above the line does
+                 the line AT THIS SPOT?         the STRONG echo (45 dBZ) reach?
+  Looks at       every point the beam hits      one storm, its top part
+  Needs storm?   NO - any rain cloud            YES - strong and tall
+  Rule           above line: ice, echo -7 dB    45 dBZ at 4600 ft or more
+                 weaker, cyan colour            above the line -> hail icon
+                 1000 ft below line: melting
+                 snow, echo +5 dB brighter
+                 ("bright band"), white
+  Line wrong by  colour band at the wrong       hail icon MISSING or FALSE
+  2000 ft ->     height
+
+In short:
+  SNOW = "is it cold HERE?"                      (above or below the line)
+  HAIL = "is the storm strong enough HIGH UP?"   (how far above the line)
+
+
+6. SNOW vs HAIL - WHAT THEY ARE, HOW PILOTS DETECT THEM
+-------------------------------------------------------
+                SNOW                              HAIL
+  ------------  --------------------------------  ------------------------------
+  What          soft ice crystals (flakes)        HARD ice balls, pea to golf
+                                                  ball or bigger
+  How formed    water freezes slowly in cold,     strong UPDRAFT carries drops
+                calm clouds                       up and down, ice grows in
+                                                  layers like an onion
+  Cloud         calm, flat, wide (Nimbostratus)   tall violent thunderstorm (Cb)
+  Season        winter, cold air                  also SUMMER (hot ground =
+                                                  strong storms)
+  Area          BIG: tens to hundreds of km       SMALL: few km under the core
+  Danger        low visibility, icing, slippery   breaks windscreen, dents nose,
+                runway                            damages engines
+  On radar      WEAK echo (green, some yellow)    very STRONG (red, magenta)
+
+How a pilot detects SNOW (radar cannot say "snow"):
+  1. Temperature below 0 degC / beam above the freezing level
+  2. Weather reports (METAR "SN")
+  3. Radar: wide, weak, smooth green area in cold air
+  4. Looking outside
+  TRAP: snow looks WEAKER than it is - heavy snow can look like light rain.
+
+How a pilot detects HAIL (radar cannot see hail directly):
+  1. Very strong echo: red / magenta
+  2. TILT UP: storm still red HIGH up (above freezing) = strong updraft
+     (our hail icon uses this: 45 dBZ at 4600 ft or more above freezing)
+  3. Warning shapes: hook, finger, U-shape, scalloped edges
+  4. Storm growing very fast
+  5. Hail icon on modern radars (Honeywell IntuVue, Collins MultiScan)
+  6. Stay 20 NM away; never fly UNDER THE ANVIL (flat top) - hail can
+     fall into clear air where the radar sees nothing.
+
+
+7. WHICH WEATHER BELONGS TO STORMS (AND WHICH DOES NOT)
+-------------------------------------------------------
+  Windshear (microburst)   comes from thunderstorms (Cb)    STORMS ONLY
+  Hail                     comes from thunderstorms (Cb)    STORMS ONLY
+  Turbulence (strong)      mostly storm cores and edges     MOSTLY STORMS
+  Snow                     any rain cloud when it is COLD   NOT storms -
+                                                            needs COLD AIR
+
+So:
+  - windshear, hail, strong turbulence -> need to know WHICH clouds are
+    real storms (Cb)           -> CLOUDS help
+  - snow -> needs to know the TEMPERATURE in that area
+                               -> WEATHER STATIONS help
+
+
+8. THE CHANGES WE WILL MAKE
+---------------------------
+CHANGE A - Clouds (cloudArray) for SHAPE, PLACE, TOP, TYPE
+
+  A1. wxradar_export.nas (inside FlightGear)
+      - Copy clouds to /wxradar/clouds every few seconds.
+      - Only RAIN clouds (storm / rain types), not every small fair cloud
+        (there can be thousands).
+      - Pack into one text line, like the terrain, so it is fast.
+      - FIRST: save them to a text file (like volume_current.txt) to check
+        the type names and values.
+
+  A2. fg_link.py
+      - Read /wxradar/clouds and unpack into a list.
+
+  A3. weather.py (main change)
+      - GROUP nearby rain clouds into one storm.
+      - SHAPE  = area covered by the cloud pieces (uneven, real).
+      - CORE   = where pieces are most packed -> red / magenta there.
+      - STRENGTH = rain / turbulence of the VOLUME at that spot;
+                   no volume -> by cloud type (Cb strong, Nimbus medium).
+      - TOP    = height of the highest cloud piece.
+
+  A4. main.py
+      - Option "Echo shape: from clouds / from volumes".
+      - No clouds -> falls back to volumes automatically.
+
+  A5. Things that use storms
+      - Hail icon  : only on Cb, using the real cloud tops.
+      - Windshear  : microburst only under Cb cores, 1-4 km size.
+      - Turbulence : strongest on Cb cores and edges.
+      - Beam over the top : uses real cloud tops.
+
+CHANGE B - Weather stations (weatherStationArray) for FREEZING LEVEL PER AREA
+
+  B1. wxradar_export.nas
+      - Copy each station: lat, lon, alt, T, D, p -> /wxradar/stations.
+  B2. fg_link.py
+      - Read the stations.
+  B3. basic_weather.py / weather.py
+      - Freezing level for each station:
+            freezing = station alt + T / 2 degC x 1000 ft
+      - For any point: use the nearest station (or blend between them,
+        like FlightGear does).
+  B4. radar.py
+      - Snow colours, bright band, ice weakening and the hail rule use the
+        freezing level OF THAT AREA, not one value for the whole radar.
+      - Keep the old way (temperature table) as fallback.
+
+
+9. WHAT EACH CHANGE FIXES (BEFORE -> AFTER)
+-------------------------------------------
+  Feature       BEFORE (volumes, one freezing)   AFTER (clouds + stations)
+  ------------  -------------------------------  ------------------------------
+  Storm shape   squares and circles              real uneven outline
+  Storm place   somewhere in a big box           where you SEE it outside
+  Storm core    flat colour                      red/magenta where clouds packed
+  Storm top     volume top (often wrong)         highest real cloud piece
+  HAIL          any strong rain box; far storms  only Cb; real top; each storm
+                judged by YOUR temperature       judged by ITS OWN freezing lvl
+  WINDSHEAR     every rain box with rain > 0.5,  only under Cb cores, 1-4 km,
+                9-18 km wide (too big)           like a real microburst
+  TURBULENCE    flat over the whole box          patches on storm cores / edges
+  SNOW          one freezing level everywhere    freezing level per area; shape
+                                                 under real clouds
+  Bright band   one height everywhere            right height in each area
+
+  How much it helps:
+    Windshear   ***  (biggest)
+    Hail        ***
+    Turbulence  **
+    Snow        *    from clouds,  ***  from weather stations
+
+
+10. ORDER OF WORK
+-----------------
+  Step 1  wxradar_export.nas -> save clouds + stations to a TEXT FILE
+          (look at the data first; radar does not change)
+  Step 2  fg_link.py         -> read clouds + stations
+  Step 3  weather.py         -> shape from clouds, strength from volumes
+  Step 4  main.py            -> switch clouds / volumes (+ fallback)
+  Step 5  hail, windshear, turbulence use storm clouds (Cb)
+  Step 6  freezing level per area (stations) for snow, bright band, hail
+  Step 7  TEST in FlightGear: compare radar with clouds out of the window,
+          try "Thunderstorms", "Cold front", "Low pressure" weather
+
+
+11. THINGS TO WATCH OUT FOR
+---------------------------
+  - Cloud TYPE NAMES must be checked in the text file first (which names
+    are rain clouds, which are storms).
+  - Too many clouds can slow FlightGear: send only nearby rain clouds.
+  - Clouds move with the wind: re-send every few seconds.
+  - Clouds have NO rain number: echo strength still comes from volumes or
+    is decided from cloud type (a model, like the windshear wind).
+  - Weather stations only differ if FlightGear's weather differs between
+    tiles. With one simple weather everywhere, the result is almost the
+    same as now.
+  - thunderstormArray is NOT used for shapes (missing in tropical / cold
+    front weather). Maybe later only for the lightning icon.
+
+
+12. WHAT WAS BUILT (Change A + Change B are now in the app)
+-----------------------------------------------------------
+wxradar_export.nas (copy it again into fgdata\Nasal\ !)
+  - Every 5 s: /wxradar/clouds/data   clouds near the plane (up to 4000,
+    about 65 NM), without cirrus/altocumulus and other high thin clouds.
+  - Every 5 s: /wxradar/stations/data every tile's weather station.
+  - Also /wxradar/clouds/count, /wxradar/clouds/total, /wxradar/stations/count
+    (check them in the property browser).
+
+fg_link.py
+  - Reads both every 5 s (Detailed Weather only): parse_cloud_export(),
+    parse_stations().
+
+weather.py (FlightGearWeather)
+  - For each rain/snow volume: the clouds inside it (up to 1.3 x its size)
+    are spread on a 0.2 NM grid -> "cloud cover" 0..1.
+      cover below 0.12          -> no echo
+      cover 0.12 .. 1           -> green edge up to the volume's own
+                                   strength where clouds are packed
+  - Echo top = highest cloud (never lower than the volume's own top).
+    The anvil (Stratus (thin)) is not counted: it gives almost no echo.
+  - STORM = the volume has a Cumulonimbus / Cb_box / Congestus cloud.
+  - Storm CORE = the most packed spot of its clouds.
+  - Turbulence (WX+T): only in storms.
+  - Microburst (windshear): only under storms, on the core, radius
+    0.5 - 1.1 NM (real ones are under 4 km across).
+  - A volume WITHOUT clouds keeps its old shape (nothing lost).
+  - freezing_at(x, y): freezing level per area =
+        freezing level near the plane
+        + (station temperature there - station temperature here) x 505 ft/degC
+    (FlightGear cools the air 1.98 degC per 1000 ft.)
+    So near the plane nothing changes; far areas move up or down.
+
+radar.py
+  - Ice (-7 dB), bright band (+5 dB) and "From freezing level" snow colours
+    use the freezing level of each point's area.
+  - Hail icon: only on storms, on the core, with the real cloud top and the
+    storm's own freezing level.
+
+main.py
+  - "Shape from FlightGear's clouds"  (Realistic only, on by default)
+  - "Freezing level per area"         (on by default)
+  - FlightGear panel: "Cloud pieces (export)" = how many clouds came, how
+    many volumes they shape, how many storms (Cb) were found.
+    "Weather stations" = how many, their temperatures, freezing level range.
+
+Fallbacks (nothing breaks):
+  - Old wxradar_export.nas / Basic Weather: no clouds, no stations -> works
+    exactly as before.
+  - Switch either box off -> old behaviour for that part.
+  - "Real data" echo shape -> FlightGear's volumes exactly as given (clouds
+    are only used in Realistic).
+
+Tested with made-up FlightGear data (one thunderstorm with Cb clouds, one
+big rain box with Nimbus clouds, three stations 16 / 20 / 26 degC):
+  - storm found only in the Cb volume; rain box shaped, but no storm
+  - hail icon and microburst on the storm core
+  - turbulence only in the storm (rain box lost its magenta)
+  - freezing level 7,991 - 13,012 ft across the areas (10,000 ft at the plane)
+NOT yet tested inside real FlightGear: check the panel numbers there.

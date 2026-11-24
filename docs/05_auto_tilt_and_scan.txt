@@ -1,0 +1,141 @@
+HOW THE RADAR SCANS, AND "AUTO" TILT
+====================================
+(Read 06_tilt.txt first if "tilt" is new to you.)
+
+
+PART 1 - THE RADAR MOVES IN ONE DIRECTION ONLY: LEFT <-> RIGHT
+-------------------------------------------------------------
+Think of a torch fixed on a windscreen wiper.
+
+  Seen from ABOVE:
+
+               left  \   |   /  right
+                      \  |  /
+                       \ | /
+                        \|/
+                       PLANE
+
+  - The antenna swings from LEFT to RIGHT and back (90 deg each side).
+  - One swing takes about 4 seconds.
+  - Behind the swing line, the picture on the screen is drawn again.
+
+  It does NOT swing up and down by itself. Up/down is the TILT, and the
+  tilt stays the SAME during the whole swing.
+
+  So: left-right = automatic swing.   up-down = tilt (set by knob or AUTO).
+
+Our app:  exactly this. Swing +/- 90 deg, 45 deg per second (4 s per
+          swing), one tilt for the whole swing.            -> like real.
+
+
+PART 2 - WHY TILT MUST CHANGE
+-----------------------------
+The right tilt depends on TWO things:
+
+  1. HOW HIGH you fly       (high up -> aim more down)
+  2. HOW FAR you look       (range 40 NM or 160 NM?)
+
+Aim too high: the beam passes OVER the storm -> storm missed.
+Aim too low:  the beam hits the GROUND -> screen full of ground echo.
+
+The pilot would have to turn the knob every time altitude or range
+changes. AUTO does it for the pilot.
+
+
+PART 3 - WHAT "AUTO" DOES (OUR APP)
+-----------------------------------
+ONE simple rule:
+
+  "Aim so that the LOWEST part of the beam just touches the ground a
+   little BEYOND the edge of the screen."
+
+  Seen from the SIDE:
+
+   PLANE >==========______________
+           \\\\\\\\\\\\\\\\\\\\\\\\\\_______   <- beam (cone)
+                  \\\\\\\\\\\\\\\\\\\\\\\\\\\\\_____
+                                    \\\\\\\\\\\\\\\\\\\\
+   ground ______________________________________|_____X____
+                                     edge of screen   ^
+                                                lowest part of beam
+                                                touches ground here
+                                                (a bit past the edge)
+
+  Why this point?
+   - Up to the edge of the screen the beam is still in the air -> you
+     see WEATHER, not ground.
+   - The beam is as LOW as possible -> it sees the lower, wet, strong part
+     of storms (not over their tops).
+
+  "A bit beyond the edge" = 1.15 x range.
+     range 80 NM -> touches the ground at 92 NM.
+
+  Rounding: the knob moves in 0.25 deg steps. The app always rounds
+  UPWARDS (e.g. -1.02 -> -1.00), so the beam never dips into the ground.
+
+  On the runway (height 0): the ground is right there, so AUTO points the
+  beam's CENTRE a bit UP (+2.75 deg) so its LOWEST part is level.
+
+
+PART 4 - EXAMPLES (real numbers from the app)
+---------------------------------------------
+  Height       Range     AUTO tilt    Meaning
+  ----------   -------   ---------    --------------------------------
+  30,000 ft     80 NM    -1.00 deg    a little down
+  35,000 ft    160 NM    -0.25 deg    looking far: almost level
+  30,000 ft    320 NM     0.00 deg    level (earth curves away anyway)
+  on runway     40 NM    +2.75 deg    centre up, lowest part level
+
+  Change range from 80 to 320 NM at 30,000 ft: tilt goes -1.00 -> 0.00.
+  You did nothing; AUTO did it.
+
+  On the screen the tilt shows with an "A" (e.g. -1.0A) when AUTO is on.
+  Untick AUTO to use the knob yourself.
+
+
+PART 5 - WHAT REAL RADARS DO (better than ours)
+-----------------------------------------------
+  a) Simple AUTO (older radars): same rule as our app.        = ours
+
+  b) Collins "MultiScan": uses TWO tilts. One swing high, next swing low,
+     and the computer joins the two pictures. Two looks = fewer storms
+     missed.                                                  ours: 1 tilt
+
+  c) Honeywell "RDR-4000 / IntuVue": swings at MANY tilts, one after the
+     other, and remembers everything in a 3D box. Then it draws the
+     weather at the heights where the plane will fly. The pilot needs no
+     tilt at all. It can also show a SIDE VIEW of the storm.  ours: no
+
+  d) Both b) and c) know where mountains are (terrain database) and
+     remove the ground echo.                    ours: only draws mountains
+
+  e) Real antennas stay LEVEL when the plane turns or climbs (stabilised,
+     using pitch and roll).   ours: the app thinks the plane is always level
+
+
+PART 6 - IS OUR APP CORRECT?
+----------------------------
+  Left-right swing, 4 s                     YES
+  AUTO from height and range                YES (like simple AUTO)
+  Stays level in turns (pitch/roll)         NO  - plane always level
+  Aims higher over mountains                NO
+  Two tilts / 3D box                        NO  - one tilt
+
+
+PART 7 - WHAT COULD BE IMPROVED
+-------------------------------
+  T1. Pitch/roll: read them from FlightGear or the other simulator, keep
+      the beam level. Switch to turn it off as a lesson (in a turn, one
+      side of the screen fills with ground).
+  T2. AUTO over mountains: use the terrain heights we already get, so the
+      beam aims above the highest ground.
+  T3. Two tilts like MultiScan.
+  T4. 3D box + side view like RDR-4000.
+
+
+PART 8 - WHAT FLIGHTGEAR / THE SIMULATOR CAN GIVE FOR THIS
+----------------------------------------------------------
+  /orientation/pitch-deg, /orientation/roll-deg  -> T1
+  /position/altitude-agl-ft (height above ground) -> AUTO
+  Terrain heights (already sent by wxradar_export.nas) -> T2
+  Vertical speed, autopilot altitude -> which heights matter (T4)

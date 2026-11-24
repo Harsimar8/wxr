@@ -1,0 +1,103 @@
+WEATHER RADAR - HOW IT WORKS, IN SIMPLE WORDS
+=============================================
+
+This folder explains each part of the weather radar:
+  1. how a REAL aircraft weather radar does it,
+  2. how OUR APP does it,
+  3. whether the app is right,
+  4. what could be improved,
+  5. what more information FlightGear (or another simulator) can give us.
+
+Files:
+  01_hail.txt          Hail icon
+  02_snow.txt          Snow and the freezing level
+  03_windshear.txt     Predictive windshear (PWS), microbursts
+  04_attenuation.txt   Heavy rain "hiding" what is behind it
+  05_auto_tilt_and_scan.txt   AUTO tilt and how the antenna sweeps
+  06_tilt.txt          Manual tilt, beam width, ground clutter
+  07_clouds_and_freezing_level.txt   Clouds vs volumes, freezing level,
+                       snow vs hail, and the planned changes
+  08_before_and_after_changes.txt    What was before and what changed
+                       (clouds + freezing level per area), how to run it
+  09_placing_weather_and_fake_plane.txt   Placing storms on the map, and
+                       the fake plane (other simulator over UDP)
+  (this file)          The basics + turbulence and gain in short
+
+
+THE BASICS (read this first)
+----------------------------
+A weather radar is like a torch that sends out radio waves instead of light.
+The antenna in the nose sends a short pulse, the pulse hits rain drops, and a
+tiny part of it comes back. The radar measures:
+
+  - HOW LONG it took to come back  -> how FAR the rain is.
+  - WHICH WAY the antenna pointed  -> the DIRECTION of the rain.
+  - HOW STRONG the echo is         -> HOW HEAVY the rain is.
+
+The strength is measured in "dBZ". Bigger number = heavier rain:
+
+  20-30 dBZ  green    light rain
+  30-40 dBZ  yellow   moderate rain
+  40-50 dBZ  red      heavy rain        (avoid)
+  50+   dBZ  magenta  very heavy rain   (avoid, storm core)
+
+Important: the radar sees WATER DROPS, not clouds and not wind. A cloud
+without rain is invisible. Clear air turbulence is invisible. Dry hail and
+dry snow give only a weak echo.
+
+The beam is like a cone, 3.5 degrees wide. Far away it becomes very tall
+(at 40 NM it is about 15,000 ft tall). The radar only sees the weather at the
+heights where the beam passes. That is why TILT (aiming up/down) matters so
+much.
+
+
+TURBULENCE (WX+T mode) - short version
+--------------------------------------
+Real radar: Doppler. It measures how fast the drops move towards or away
+from it. If drops close to each other move at very different speeds
+(spread of 5 m/s or more), the air is churning: turbulence. Shown magenta,
+only up to 40 NM, and only where there is rain (no rain = no drops to
+measure). The gain knob does not change it.
+
+Our app: same rules. Magenta within 40 NM, only where there is an echo,
+gain does not change it. The turbulence value comes from FlightGear's
+weather volumes (turbulence 0.6 / 0.8 / 1.0 in thunderstorms).
+
+Correct?  Yes, close to real.
+Could improve: real Doppler turbulence is patchy and moves from scan to
+scan; in Realistic mode the app already makes it flicker a little.
+
+
+GAIN - short version
+--------------------
+Real radar: CAL = calibrated (colours mean the dBZ numbers above). The pilot
+can turn gain up to see weak echoes (snow, light rain far away) or down to
+find the strongest core inside a big red area. After use, back to CAL,
+otherwise the colours lie.
+
+Our app: CAL, or -10 to +10 dB. Same idea. Correct.
+
+
+THE THREE CONNECTIONS (reminder)
+--------------------------------
+  UDP 49100   other simulator / fake plane  ->  app   (where the plane is)
+  UDP 5510    app  ->  FlightGear                     (moves FG's aircraft)
+  telnet 5401 app  <-> FlightGear                     (reads FG's weather)
+
+
+SUMMARY TABLE
+-------------
+  Topic          Close to real?   Biggest thing to improve
+  -------------  ---------------  ------------------------------------------
+  Hail           Yes (good guess) Also on Simulated storms
+  Snow           Yes (now)        Heavy snow too strong (42 dBZ, should be
+                                  ~35 max); wet snow below freezing level
+  Windshear      Mostly           Landing warning 1.5 NM; alerts off near
+                                  ground; not every storm is a microburst
+  Attenuation    Yes, simple      Too gentle in very heavy rain; no
+                                  "can't see behind" warning on screen
+  AUTO tilt      Partly           No pitch/roll; no terrain database;
+                                  one beam (real ones use 2 or full 3D)
+  Manual tilt    Yes              Pitch/roll stabilisation
+  Turbulence     Yes              -
+  Gain           Yes              -

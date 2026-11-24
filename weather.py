@@ -353,6 +353,41 @@ MB_VMAX = 20.0         # strongest outflow, m/s (rain 1.0, turbulence 1.0)
 _HS = np.linspace(0.0, 5000.0, 501)
 _OUTFLOW_MAX = float(np.max((1 - np.exp(-_HS / 150.0)) * np.exp(-_HS / 1500.0)))
 
+# --- Echo shape from FlightGear's clouds (wxradar_export.nas) ---------------
+# A volume only says "it rains somewhere in this box". The clouds FlightGear
+# draws say exactly where: the echo is drawn where the volume's clouds are,
+# strongest where they are packed. The volume still gives the strength (rain,
+# snow, turbulence). Clouds are counted as the volume's when they are inside
+# it (up to CLOUD_REACH x its size: some cloud pieces stick out a little).
+CLOUD_REACH = 1.3
+CLOUD_CELL_NM = 0.2       # grid the cloud cover is worked out on
+CLOUD_MAX_CELLS = 240     # ... at most this many cells along each side
+CLOUD_BLUR_NM = 0.4       # cloud pieces are spread over at least this (NM)
+CLOUD_EDGE = 0.12         # cloud cover (0..1) where the echo starts
+# Cloud types that mean a real storm (Cumulonimbus). FlightGear builds its
+# thunderstorms from "Cumulonimbus (cloudlet)", showers from "Cb_box".
+STORM_TYPES = ("Cumulonimbus", "Cb_box", "Congestus")
+# The anvil (spread-out ice on top of a storm) gives almost no echo.
+ANVIL_TYPES = ("Stratus (thin)",)
+# Microburst under a storm's core: real ones are under 4 km across.
+MB_RADIUS_MIN_NM, MB_RADIUS_MAX_NM = 0.5, 1.1
+
+# --- Freezing level per area (weather stations) -----------------------------
+# Detailed Weather puts one station in every tile with its own sea-level
+# temperature. FlightGear cools the air about 1.98 degC per 1000 ft, so an
+# area 2 degC warmer has its freezing level about 1000 ft higher.
+FT_PER_DEGC = 1000.0 / 1.98
+STATION_MIN_NM = 100.0 / 1852.0     # as FlightGear: no point closer than 100 m
+
+
+def _blur(a, sigma_cells):
+    """Gaussian blur along both axes (keeps the total)."""
+    r = max(1, int(round(3 * sigma_cells)))
+    k = np.exp(-0.5 * (np.arange(-r, r + 1) / max(sigma_cells, 1e-3)) ** 2)
+    k /= k.sum()
+    a = np.apply_along_axis(lambda row: np.convolve(row, k, mode="same"), 0, a)
+    return np.apply_along_axis(lambda row: np.convolve(row, k, mode="same"), 1, a)
+
 
 def _clamp01(x):
     return max(0.0, min(1.0, x or 0.0))
@@ -366,17 +401,27 @@ class FlightGearWeather:
         self.origin = None
         self.altitude_ft = 0.0
         self.realistic = False      # Echo shape: False = flat FlightGear data
-        self.freezing_ft = None     # freezing level (ft MSL): where tops start to fade
+        self.freezing_ft = None     # freezing level (ft MSL) near the aircraft
+        self.cloud_shapes = True    # Realistic: shape from FlightGear's clouds
+        self.area_freezing = True   # freezing level per area (weather stations)
+        self.here = (0.0, 0.0)      # aircraft (NM from origin)
+        self.clouds = None          # cloud pieces: dict of arrays (NM), or None
+        self.stations = None        # (x NM, y NM, T degC) arrays, or None
         self.noise = ValueNoise(11)
         self._cache = (None, None, None, None)
+        self._cloud_src = (None, None, None)    # what the cloud grids were built from
+        self._cloud_infos = []
 
-    def update(self, volumes, origin, altitude_ft):
-        """Update live volumes and aircraft position."""
+    def update(self, volumes, origin, altitude_ft, clouds=None, stations=None, here=None):
+        """Update live volumes, clouds, weather stations and aircraft position."""
         self.origin = origin
         self.altitude_ft = altitude_ft
+        if here is not None:
+            self.here = here
         self.volumes = []
 
         if origin is None:
+            self.clouds = self.stations = None
             return
 
         lat0, lon0 = origin
@@ -400,7 +445,144 @@ class FlightGearWeather:
                 "r2": (v.get("r2-m") or 0) / 1852.0,
                 "angle": math.radians(v.get("heading-deg") or 0),
                 "seed": 37.0 * len(self.volumes),
+                "cloud": None,
             })
+
+        self._load_stations(stations, lat0, lon0)
+        # Cloud grids only change when FlightGear sends new volumes or clouds
+        # (every few seconds), not on every update.
+        src = (volumes, clouds, origin)
+        if not all(a is b for a, b in zip(src, self._cloud_src)):
+            self._cloud_src = src
+            self._load_clouds(clouds, lat0, lon0)
+            self._cloud_infos = [self._cloud_grid(item) for item in self.volumes]
+        for item, info in zip(self.volumes, self._cloud_infos):
+            item["cloud"] = info
+
+    # ------------------------------------------------- freezing level per area
+    def _load_stations(self, stations, lat0, lon0):
+        if not stations:
+            self.stations = None
+            return
+        cos0 = math.cos(math.radians(lat0))
+        self.stations = (
+            np.array([(s["lon"] - lon0) * 60.0 * cos0 for s in stations]),
+            np.array([(s["lat"] - lat0) * 60.0 for s in stations]),
+            np.array([s["T"] for s in stations]))
+
+    def _station_temp(self, X, Y):
+        """Sea-level temperature at X, Y: inverse-distance average of the
+        weather stations, the same way FlightGear blends them."""
+        sx, sy, st = self.stations
+        X, Y = np.asarray(X, float), np.asarray(Y, float)
+        d = np.maximum(np.hypot(X[..., None] - sx, Y[..., None] - sy), STATION_MIN_NM)
+        w = 1.0 / d
+        return (w * st).sum(axis=-1) / w.sum(axis=-1)
+
+    def uses_area_freezing(self):
+        return (self.area_freezing and self.freezing_ft is not None
+                and self.stations is not None and len(self.stations[2]) > 1)
+
+    def freezing_at(self, X, Y):
+        """Freezing level (ft MSL) at points X, Y.
+
+        Starts from the freezing level found near the aircraft (freezing_ft)
+        and moves it up or down by how much warmer or colder each area's
+        weather station is than the stations around the aircraft. Without
+        stations (or switched off) it is freezing_ft everywhere.
+        """
+        if not self.uses_area_freezing():
+            return self.freezing_ft
+        t_here = float(self._station_temp(*self.here))
+        out = self.freezing_ft + (self._station_temp(X, Y) - t_here) * FT_PER_DEGC
+        return float(out) if np.ndim(out) == 0 else out
+
+    def freezing_range(self):
+        """(lowest, highest) freezing level over the weather stations."""
+        if not self.uses_area_freezing():
+            return None
+        f = self.freezing_at(self.stations[0], self.stations[1])
+        return float(np.min(f)), float(np.max(f))
+
+    # ------------------------------------------------------ shape from clouds
+    def _load_clouds(self, clouds, lat0, lon0):
+        """Cloud pieces in NM from the origin, without anvils."""
+        if not clouds or len(clouds["east_m"]) == 0:
+            self.clouds = None
+            return
+        cos0 = math.cos(math.radians(lat0))
+        bx = (clouds["lon0"] - lon0) * 60.0 * cos0
+        by = (clouds["lat0"] - lat0) * 60.0
+        names = clouds["types"]
+        kind = np.array([names[k] if 0 <= k < len(names) else "" for k in clouds["type"]])
+        storm = np.array([n.startswith(STORM_TYPES) for n in kind], dtype=bool)
+        keep = np.array([not n.startswith(ANVIL_TYPES) for n in kind], dtype=bool)
+        self.clouds = {
+            "x": (bx + clouds["east_m"] / 1852.0)[keep],
+            "y": (by + clouds["north_m"] / 1852.0)[keep],
+            "top": (clouds["alt_ft"] + clouds["height_m"] * 3.28084 / 2)[keep],
+            "r": (np.maximum(clouds["width_m"], 100.0) / 2 / 1852.0)[keep],
+            "storm": storm[keep],
+            "total": len(kind),
+        }
+
+    def using_clouds(self):
+        """True when the echo shapes come from FlightGear's clouds."""
+        return self.realistic and self.cloud_shapes and self.clouds is not None
+
+    def _cloud_grid(self, item):
+        """Cloud cover around one rain/snow volume, from the clouds inside it.
+
+        Returns None (no clouds there: the volume's own shape is used), or a
+        dict: cover/wall grids, where the grid starts (x0, y0), cell size, top
+        (ft, highest cloud), storm (a Cumulonimbus among them), core (x, y of
+        the most packed spot), mb_radius (NM, for the microburst), count.
+        """
+        c, v = self.clouds, item["data"]
+        if c is None or (v.get("rain-flag") != 1 and v.get("snow-flag") != 1):
+            return None
+        d, _, _ = self._dist(item, c["x"], c["y"])
+        if d is None:
+            return None
+        sel = d <= CLOUD_REACH
+        if not sel.any():
+            return None
+        x, y, r = c["x"][sel], c["y"][sel], c["r"][sel]
+        size = max(item["r1"], item["r2"])
+        half = CLOUD_REACH * size + 3 * CLOUD_BLUR_NM
+        cell = max(CLOUD_CELL_NM, 2 * half / CLOUD_MAX_CELLS)
+        n = int(math.ceil(2 * half / cell))
+        x0, y0 = item["x"] - half, item["y"] - half
+        edges_x = x0 + cell * np.arange(n + 1)
+        edges_y = y0 + cell * np.arange(n + 1)
+        # Area each cloud piece covers, per cell, spread out like the cloud.
+        area, _, _ = np.histogram2d(y, x, bins=(edges_y, edges_x), weights=math.pi * r * r)
+        sigma = max(CLOUD_BLUR_NM, float(np.median(r)))
+        density = _blur(area / (cell * cell), sigma / cell)
+        cover = np.clip(density, 0.0, 1.0)
+        if cover.max() < CLOUD_EDGE:
+            return None
+        gy, gx = np.gradient(cover, cell)
+        wall = np.hypot(gx, gy)
+        wall = wall / max(float(wall.max()), 1e-6)
+        # Core: where the clouds are packed most (before capping at 1, so a
+        # big fully covered area still has one clear centre).
+        iy, ix = np.unravel_index(int(np.argmax(_blur(density, 2 * sigma / cell))),
+                                  cover.shape)
+        return {"cover": cover, "wall": wall, "x0": x0, "y0": y0, "cell": cell,
+                "top": float(c["top"][sel].max()), "storm": bool(c["storm"][sel].any()),
+                "core": (x0 + (ix + 0.5) * cell, y0 + (iy + 0.5) * cell),
+                "mb_radius": min(MB_RADIUS_MAX_NM, max(MB_RADIUS_MIN_NM, 0.4 * size)),
+                "count": int(sel.sum())}
+
+    def cloud_info(self, item):
+        """The volume's cloud data when shapes come from clouds, else None."""
+        return item.get("cloud") if self.using_clouds() else None
+
+    def storm_count(self):
+        if not self.using_clouds():
+            return None
+        return sum(1 for item in self.volumes if item["cloud"] and item["cloud"]["storm"])
 
     @staticmethod
     def _dist(item, X, Y):
@@ -428,6 +610,10 @@ class FlightGearWeather:
             return c[3]
         out = []
         for item in self.volumes:
+            info = self.cloud_info(item)
+            if info is not None:
+                out.append(self._cloud_shape(item, info, X, Y))
+                continue
             d, u, w = self._dist(item, X, Y)
             near = None if d is None else d < SHAPE_REACH
             if near is None or not near.any():
@@ -467,6 +653,33 @@ class FlightGearWeather:
         self._cache = (X, Y, self.volumes, out)
         return out
 
+    def _cloud_shape(self, item, info, X, Y):
+        """Same parts as the volume shape in _shapes, but from the cloud cover:
+        the echo is where the clouds are, strongest where they are packed."""
+        n_y, n_x = info["cover"].shape
+        ix = np.floor((X - info["x0"]) / info["cell"]).astype(int)
+        iy = np.floor((Y - info["y0"]) / info["cell"]).astype(int)
+        on = (ix >= 0) & (ix < n_x) & (iy >= 0) & (iy < n_y)
+        cover = np.zeros(X.shape)
+        cover[on] = info["cover"][iy[on], ix[on]]
+        near = cover > 0.02
+        if not near.any():
+            return None
+        cv = cover[near]
+        wall = np.zeros(cv.shape)
+        jx, jy = ix[near], iy[near]
+        wall[:] = info["wall"][jy, jx]
+        k, size = item["seed"], max(item["r1"], item["r2"], 0.1)
+        un, wn = (X[near] - item["x"]) / size, (Y[near] - item["y"]) / size
+        tex = (0.6 + 0.5 * self.noise(un / 0.6 + k, wn / 0.6 + k)
+               + 0.25 * self.noise(un / 0.25 + k + 50, wn / 0.25 + 50))
+        vary = 0.85 + 0.4 * np.clip((tex - 0.6) / 0.75, 0.0, 1.0)
+        # 0 where the clouds start, 1 where they are fully packed.
+        inner = np.clip((cv - CLOUD_EDGE) / (1.0 - CLOUD_EDGE) * vary, 0.0, 1.0)
+        filled = cv >= CLOUD_EDGE
+        patch = 0.35 + 1.3 * self.noise(un / 0.35 + k + 90, wn / 0.35 + k + 7)
+        return (near, cv * tex, wall, patch, inner, filled)
+
     def _realistic_field(self, X, Y, H):
         rain_refl = np.zeros_like(X, dtype=float)
         snow_refl = np.zeros_like(X, dtype=float)
@@ -478,6 +691,13 @@ class FlightGearWeather:
             base, top = v.get("base-altitude-ft"), v.get("top-altitude-ft")
             if base is None or top is None:
                 continue
+            info = self.cloud_info(item)
+            if info is not None:
+                # Rain falls from the cloud to the volume's base, and the echo
+                # reaches up to the real cloud top (never lower than the volume).
+                top = max(top, info["top"])
+            # This volume's own freezing level (its area's weather station).
+            fz = self.freezing_at(item["x"], item["y"])
             near, shape, wall, patch, inner, filled = shp
 
             def strength(c):
@@ -497,16 +717,19 @@ class FlightGearWeather:
             if v.get("rain-flag") == 1:
                 rain = _clamp01(v.get("rain"))
                 core = 0.15 + 1.05 * rain
-                fade = top_fade(hn, base, top, rain, self.freezing_ft)
+                fade = top_fade(hn, base, top, rain, fz)
                 val = np.where(inh, np.maximum(strength(core) - fade, 0.0), 0.0)
                 rain_refl[near] = np.maximum(rain_refl[near], val)
             if v.get("snow-flag") == 1:
                 snow = _clamp01(v.get("snow"))
                 score = 0.15 + 0.65 * snow
-                fade = top_fade(hn, base, top, snow, self.freezing_ft)
+                fade = top_fade(hn, base, top, snow, fz)
                 val = np.where(inh, np.maximum(strength(score) - fade, 0.0), 0.0)
                 snow_refl[near] = np.maximum(snow_refl[near], val)
-            if v.get("turbulence-flag") == 1:
+            # With cloud shapes, strong turbulence belongs to real storms (Cb)
+            # only, not to wide gentle rain.
+            storm_ok = info is None or info["storm"]
+            if v.get("turbulence-flag") == 1 and storm_ok:
                 t = _clamp01(v.get("turbulence"))
                 sw = (SW_PER_TURB * t * (0.35 + 0.65 * np.minimum(shape, 1.0))
                       + SW_WALL * wall * np.clip((core - 0.75) / 0.45, 0.0, 1.0))
@@ -521,22 +744,37 @@ class FlightGearWeather:
 
         Simple model: a downdraft in the centre that spreads out along the
         ground, strongest just outside the rain's edge (1.2 x its radius).
+        With cloud shapes: only under real storms (Cumulonimbus clouds), on
+        the storm's core, 0.5-1.1 NM radius like a real microburst.
         """
         east, north, up = (np.zeros_like(X, dtype=float) for _ in range(3))
         hz = ((1 - math.exp(-h_agl_ft / 150.0)) * math.exp(-h_agl_ft / 1500.0)
               / _OUTFLOW_MAX)
+        clouds = self.using_clouds()
         for item in self.volumes:
             v = item["data"]
             geometry = int(v.get("geometry") or 0)
-            if v.get("rain-flag") != 1 or geometry not in (1, 2):
+            if v.get("rain-flag") != 1:
                 continue
             rain = _clamp01(v.get("rain"))
-            radius = item["r1"] if geometry == 1 else max(item["r1"], item["r2"])
+            cx, cy = item["x"], item["y"]
+            if clouds:
+                # Only under a real storm (Cumulonimbus), centred on its core,
+                # the size of a real microburst (under 4 km across).
+                info = item["cloud"]
+                if info is None or not info["storm"]:
+                    continue
+                cx, cy = info["core"]
+                radius = info["mb_radius"]
+            elif geometry in (1, 2):
+                radius = item["r1"] if geometry == 1 else max(item["r1"], item["r2"])
+            else:
+                continue
             if rain <= MB_RAIN or radius <= 0:
                 continue
             t = _clamp01(v.get("turbulence")) if v.get("turbulence-flag") == 1 else 0.0
             vmax = MB_VMAX * (rain - MB_RAIN) / (1.0 - MB_RAIN) * (0.6 + 0.4 * t)
-            dx, dy = X - item["x"], Y - item["y"]
+            dx, dy = X - cx, Y - cy
             r = np.maximum(np.hypot(dx, dy), 1e-6)
             q = r / (1.2 * radius)
             ur = vmax * q * np.exp((1.0 - q * q) / 2.0) * hz

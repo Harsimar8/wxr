@@ -1,0 +1,101 @@
+HAIL
+====
+
+1. WHAT IS HAIL AND WHY CARE
+----------------------------
+Hail is balls of ice made inside a thunderstorm. A strong updraft (air going
+up fast) carries drops high above the freezing level, they freeze, fall, get
+carried up again, and grow. Hail can break the windshield and the radome,
+and damage engines. Hail can also fall OUT OF THE SIDE or the top of a
+storm, into clear air, several miles away from the red area.
+
+
+2. HOW A REAL RADAR DOES IT
+---------------------------
+A real aircraft radar CANNOT SEE HAIL ITSELF. It only sees how strong the
+echo is.
+  - Wet hail (ice with a water skin, low down) gives a VERY strong echo:
+    red or magenta.
+  - Dry hail (high up, cold) gives a WEAK echo: maybe only green, even
+    though it is dangerous.
+
+So pilots use clues (Airbus briefing note "Optimum use of the weather
+radar"):
+  - Strange shapes: hooks, fingers, U-shapes, scalloped edges = hail likely.
+  - Strong echo (red/magenta) HIGH above the freezing level = strong updraft
+    = hail likely.
+  - Big, fast-changing red areas.
+
+Newer radars (Honeywell IntuVue, Collins MultiScan) draw a HAIL ICON
+by themselves. They look at the storm in height and check if strong echo
+reaches high above the freezing level. The exact rule is the
+manufacturers' secret (not published).
+
+Ground weather radars (NEXRAD, in the USA) use a published rule
+(Waldvogel 1979):
+  "If the 45 dBZ echo reaches 1.4 km (about 4,600 ft) or more above the
+   freezing level, there is a good chance of hail."
+
+
+3. HOW OUR APP DOES IT
+----------------------
+Code: radar.py, function hail_cells().
+
+For each FlightGear RAIN volume:
+  1. Take its rain strength. Rain 0.8 = about 49 dBZ, rain 1.0 = about 57.
+  2. Go up through the volume in 100 ft steps.
+  3. Above the freezing level, make the echo 7 dB weaker (ice reflects
+     about 5 times less than water).
+  4. In Realistic mode, the top of the storm also fades (like real storms).
+  5. Find the HIGHEST point that is still 45 dBZ or more.
+  6. If that point is 4,600 ft or more above the freezing level -> hail
+     icon (white upside-down triangle with dots) at that volume.
+
+Example:
+  Freezing level 12,000 ft.
+  FlightGear thunderstorm: 0 to 20,000 ft, rain 0.8 (49 dBZ).
+  Above 12,000 ft: 49 - 7 = 42 dBZ. That is below 45.
+  -> highest 45 dBZ point is 12,000 ft = 0 ft above freezing -> NO HAIL.
+
+  A taller storm, 0 to 40,000 ft, rain 1.0 (57 dBZ):
+  Above 12,000 ft: 57 - 7 = 50 dBZ, still above 45, up to about 30,000 ft.
+  30,000 - 12,000 = 18,000 ft above freezing -> HAIL ICON.
+
+
+4. IS IT CORRECT?
+-----------------
+  Hail icon from the height of the strong echo   Yes, good guess (published
+                                                 ground-radar rule)
+  Dry hail shows weak                            Yes (the -7 dB ice rule)
+  Wet hail shows extra strong                    No (hail is treated like
+                                                 rain)
+  Works on FlightGear volumes                    Yes
+  Works on Simulated storms                      No
+  "GR" (hail) in a METAR                         Treated as rain
+
+
+5. WHAT COULD BE IMPROVED
+-------------------------
+  H1. Put the hail icon on SIMULATED storms too. The shape scenarios
+      (hook, finger, U-shape, scalloped) are exactly the hail storms of the
+      Airbus note, so they should show it.
+  H2. If the METAR says GR (hail) or GS (small hail), make the storm
+      cores a bit stronger (wet hail = very strong echo).
+  H3. "Hail outside the cloud": also warn a few NM downwind of a hail
+      storm's top (hail falls out of the anvil). Real radars do not show
+      this; it would be a teaching extra.
+
+
+6. WHAT MORE FLIGHTGEAR CAN GIVE
+--------------------------------
+  - FlightGear has NO hail information inside its volumes. Only rain, snow,
+    turbulence, lift, visibility.
+  - METAR text: "GR" / "GS" says hail is reported (but not where).
+  - Lightning (/local-weather/lightning): where strikes happen = strong
+    storm = more hail chance.
+  - Temperature by altitude (environment config table): gives the freezing
+    level, which the hail rule needs.
+  - Volume "lift" (updraft): a strong updraft is what makes hail. A volume
+    with big positive lift and heavy rain = better hail guess.
+  - We could write a Nasal script that adds our own "hail" value to each
+    thunderstorm volume when FlightGear builds it.

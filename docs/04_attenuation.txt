@@ -1,0 +1,83 @@
+ATTENUATION (HEAVY RAIN HIDING WHAT IS BEHIND IT)
+=================================================
+
+1. WHAT IS IT
+-------------
+The radar beam loses power when it goes through rain. Every drop takes a
+little bit. Through heavy rain, so much is lost that what is BEHIND the
+rain looks weaker than it really is - or is not seen at all.
+
+Example: like a torch in fog. The first fog patch is bright, but a second
+patch behind it looks dim, because the light was used up by the first one.
+
+Danger: a big storm hidden behind a smaller red cell can look green or
+black. Pilots call the black area behind a storm a "RADAR SHADOW". The
+Airbus note says: never fly into a shadow behind a storm.
+
+
+2. HOW A REAL RADAR DOES IT
+---------------------------
+  - Aircraft radars use X-band (about 9.3 GHz). X-band is strongly
+    attenuated by heavy rain. The loss counts twice: going out AND coming
+    back.
+  - Light rain: almost no loss. Heavy rain (50 dBZ): several dB per NM.
+    Through a few NM of a storm core, 20-30 dB can be lost - a red storm
+    behind becomes green or nothing.
+  - A WET RADOME (water on the nose cone) also weakens everything.
+  - Some radars partly fix it:
+      Collins: "Path Attenuation Compensation" (PAC) - makes the far echoes
+      stronger to make up, and draws a YELLOW ARC at the edge of the screen
+      where it could not see far enough.
+      Honeywell: "REACT" - shows areas where the radar cannot see any more.
+  - Pilots are taught: if there is a black area behind a red cell, assume
+    it is NOT clear.
+
+
+3. HOW OUR APP DOES IT
+----------------------
+Code: radar.py, scan(), the "if attenuation:" part.
+Switch: "Simulate attenuation" checkbox (on by default).
+
+  - Along each beam, going outwards, every piece of rain stronger than
+    30 dBZ takes power away:
+        loss (dB per NM) = (dBZ - 30) x 0.05
+  - The loss adds up. Everything behind (rain, snow, ground) gets weaker.
+
+Example:
+  A 50 dBZ storm core, 5 NM thick:
+    loss = (50 - 30) x 0.05 = 1 dB per NM, x 5 NM = 5 dB.
+  A 45 dBZ storm behind it shows as 40 dBZ: red instead of red/yellow edge.
+  With a real X-band radar the loss would probably be bigger (several dB
+  per NM), so the storm behind could look yellow or green.
+
+
+4. IS IT CORRECT?
+-----------------
+  Heavy rain weakens what is behind     Yes
+  Light rain (below 30 dBZ) no loss     Yes, about right
+  Ground behind storms also weaker      Yes
+  How much loss in very heavy rain      Too gentle (probably 2-4 times
+                                        less than real X-band)
+  Snow and ice almost no loss           Yes (only rain counts)
+  Wet radome                            No
+  Warning "can't see behind"            No
+
+
+5. WHAT COULD BE IMPROVED
+-------------------------
+  A1. Use a real X-band attenuation formula (stronger loss in very heavy
+      rain, counted both ways).
+  A2. Draw a "can't see further" mark (like Collins PAC yellow arc or
+      Honeywell REACT) where the beam has lost too much power.
+  A3. Wet radome option: everything a few dB weaker when flying in rain.
+  A4. Teaching button: show the same picture with and without attenuation
+      side by side, to see what was hidden.
+
+
+6. WHAT MORE FLIGHTGEAR CAN GIVE
+--------------------------------
+  - Rain strength along the whole beam (already used, from the volumes).
+  - Rain at the aircraft (/environment/rain-norm): to know if the radome
+    is wet (A3).
+  - Nothing else is needed - attenuation is pure physics from the rain
+    the app already knows.

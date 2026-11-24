@@ -6,6 +6,8 @@ import socket
 import threading
 import time
 
+import numpy as np
+
 # Property that takes a manual METAR string. Check it in FlightGear under
 # Debug > Browse Internal Properties > environment, as names can differ
 # between versions and weather systems.
@@ -89,6 +91,12 @@ SLOW_POLL_S = 2.0
 
 # Terrain grid made by wxradar_export.nas: "lat,lon,spacing,n|elev,...|water"
 TERRAIN_DATA = "/wxradar/terrain/data"
+# Clouds and weather stations made by wxradar_export.nas (every 5 s):
+#   clouds:   "lat0,lon0|type0;type1;...|east_m,north_m,alt_ft,width_m,height_m,type;..."
+#   stations: "lat,lon,alt_ft,T,D,p;..."   (T, D in degC at sea level)
+CLOUD_DATA = "/wxradar/clouds/data"
+STATION_DATA = "/wxradar/stations/data"
+CLOUD_EXPORT_POLL_S = 5.0
 
 # Detailed Weather only: the weather of the area, the rain/snow/turbulence
 # zones the aircraft is inside, the weather station and its cloud layers.
@@ -167,6 +175,41 @@ def _flag(text):
     return text.strip().lower() in ("1", "true")
 
 
+def parse_cloud_export(text):
+    """Clouds exported by wxradar_export.nas, or None if there are none.
+
+    Returns a dict: lat0, lon0 (where east/north are measured from), types
+    (list of names) and numpy arrays east_m, north_m, alt_ft, width_m,
+    height_m, type (index into types).
+    """
+    if not text or text.count("|") != 2:
+        return None
+    try:
+        head, names, body = text.split("|")
+        lat0, lon0 = (float(v) for v in head.split(","))
+        rows = [r.split(",") for r in body.split(";") if r]
+        a = np.array(rows, dtype=float).reshape(-1, 6)
+    except ValueError:
+        return None
+    return {"lat0": lat0, "lon0": lon0,
+            "types": names.split(";") if names else [],
+            "east_m": a[:, 0], "north_m": a[:, 1], "alt_ft": a[:, 2],
+            "width_m": a[:, 3], "height_m": a[:, 4], "type": a[:, 5].astype(int)}
+
+
+def parse_stations(text):
+    """Weather stations exported by wxradar_export.nas: list of dicts
+    lat, lon, alt (ft), T, D (degC at sea level), p (inHg)."""
+    out = []
+    for row in (text or "").split(";"):
+        try:
+            lat, lon, alt, t, d, p = (float(v) for v in row.split(","))
+        except ValueError:
+            continue
+        out.append({"lat": lat, "lon": lon, "alt": alt, "T": t, "D": d, "p": p})
+    return out
+
+
 def _parse_cfg(raw):
     """Basic Weather settings as plain lists."""
     clouds = []
@@ -202,6 +245,8 @@ class FGLink:
         self.weather_volumes = []
         self.cfg = None             # Basic Weather settings
         self.terrain = None         # terrain grid text from wxradar_export.nas
+        self.cloud_export = None    # clouds from wxradar_export.nas (parse_cloud_export)
+        self.stations = []          # weather stations from wxradar_export.nas
         self.clouds = {}
         self.cloud_alt_ft = None    # (lowest, highest) Detailed Weather cloud
         self.cache_gen = 0          # +1 on every clear_cache(); stamped on each state
@@ -310,7 +355,7 @@ class FGLink:
     # ------------------------------------------------------------ polling
     def _poll_loop(self):
         bad = 0                     # bad replies in a row
-        self._next_clouds = self._next_slow = 0.0
+        self._next_clouds = self._next_slow = self._next_export = 0.0
         while not self._stop.is_set():
             try:
                 drive, self.drive = self.drive, None
@@ -344,7 +389,8 @@ class FGLink:
         self.clouds = {}
         self.cloud_alt_ft = None
         self.weather_volumes = []
-        self._next_clouds = self._next_slow = 0.0
+        self.cloud_export, self.stations = None, []
+        self._next_clouds = self._next_slow = self._next_export = 0.0
 
     def _poll_once(self):
         gen = self.cache_gen
@@ -381,8 +427,15 @@ class FGLink:
             text = self.get(TERRAIN_DATA)
             if text and "|" in text:
                 self.terrain = text
+        if now >= self._next_export:
+            self._next_export = now + CLOUD_EXPORT_POLL_S
+            cloud_text, station_text = self.get_many([CLOUD_DATA, STATION_DATA])
+            self.cloud_export = parse_cloud_export(cloud_text) if code else None
+            self.stations = parse_stations(station_text) if code else []
 
         new["clouds"] = self.clouds if code else {}
+        new["cloud_export"] = self.cloud_export if code else None
+        new["stations"] = self.stations if code else []
         new["cloud_alt_ft"] = self.cloud_alt_ft if code else None
         new["weather_volumes"] = self.weather_volumes
         new["cfg"] = self.cfg
@@ -392,7 +445,8 @@ class FGLink:
             # clear_cache() ran while this poll was reading: what it read
             # may be from before the reset, so drop it and read again.
             self.clouds, self.cloud_alt_ft, self.weather_volumes = {}, None, []
-            self._next_clouds = self._next_slow = 0.0
+            self.cloud_export, self.stations = None, []
+            self._next_clouds = self._next_slow = self._next_export = 0.0
             return
         self.state = new
 

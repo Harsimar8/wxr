@@ -1,0 +1,118 @@
+SNOW
+====
+
+1. HOW A REAL RADAR DOES IT
+---------------------------
+A real aircraft radar CANNOT TELL SNOW FROM RAIN.
+It only measures how strong the echo is, so snow is shown in the SAME
+colours as rain: green, yellow, red.
+
+Why snow looks different in strength:
+  - DRY SNOW (cold, high up): ice reflects about 5 times less than water
+    (-7 dB). So dry snow is WEAK: mostly green, or not seen at all.
+    Heavy dry snow is at most about 30-35 dBZ (yellow).
+  - WET SNOW (melting, in the 1,000 ft or so just below the freezing
+    level): snowflakes with a water skin are big and shiny to the radar.
+    The echo gets STRONGER (+5 dB or more). This is called the
+    "BRIGHT BAND". It can look like a line of yellow/red that is not a
+    storm at all.
+  - RAIN below that: normal.
+
+Only big ground radars with "dual polarisation" can tell snow from rain.
+Airliner radars cannot.
+
+
+2. HOW THE PILOT DECIDES IT IS SNOW
+-----------------------------------
+The pilot uses their head, not the radar:
+  - Outside air temperature in the cockpit, and the freezing level from
+    the forecast.
+  - METAR / ATIS / forecast ("-SN" = light snow at the airport).
+  - Rule: echo ABOVE the freezing level = ice/snow (weaker).
+          echo JUST BELOW it = melting snow (stronger, bright band).
+          echo lower down = rain.
+  - In snow, the pilot may turn gain UP to see the weak echoes, and tilt
+    so the beam is in the snow.
+
+
+3. DOES FLIGHTGEAR GIVE SNOW?
+-----------------------------
+YES, BUT ONLY SOMETIMES.
+  - Every FlightGear weather volume has "snow" and "snow-flag" values.
+    wxradar_export.nas already sends them to the app.
+  - FlightGear only fills them when Detailed Weather is built from a
+    METAR that contains snow (SN). Then it puts a big box volume under
+    the cloud with snow = strength.
+  - The ready-made weather types (Thunderstorm, Cold front, ...) never
+    make snow, only rain.
+  - IMPORTANT: FlightGear decides "snow" ONLY from the METAR text, NOT
+    from temperature. If the METAR says SN, the volume says snow even
+    where it is +10 C.
+
+
+4. HOW OUR APP DOES IT
+----------------------
+Code: radar.py, scan(), option snow_colors. In the window: the checkbox
+"Show snow in cyan/white (training only)" under the knobs, OFF by default
+(real radars cannot show snow in another colour). Ticked = the "From
+freezing level" colours below. (Changed 24 Nov 2026: the old 3-choice box
+was replaced by this checkbox; "From weather data" is no longer in the app.)
+
+Strength: FlightGear snow value -> strength 0.15 + 0.65 x snow
+  snow 0.5 -> about 30 dBZ (green/yellow)
+  snow 1.0 -> about 42 dBZ (red strength)   <- too strong, see 6.
+Snow is NOT weakened again above the freezing level (it is already ice).
+
+Colours:
+  Checkbox OFF  [default] - "Real radar (by strength)"
+      Rain and snow both green/yellow/red by strength. Like a real radar.
+  ("From weather data (cyan/white)" - removed from the app, still in
+      radar.py: cyan where FlightGear or the METAR says snow. A real radar
+      cannot know this.)
+  Checkbox ON  - "From freezing level (cyan/white)"
+      The pilot's guess. Green/yellow echo where the beam centre is above
+      the freezing level -> cyan (snow/ice). In the 1,000 ft below it ->
+      white (melting snow). Red and magenta never change (a strong echo up
+      there means hail or a storm core - danger must stay visible).
+      If the freezing level is unknown, same as "Real radar".
+
+Example: METAR "-SN", freezing level 5,000 ft, you fly at 8,000 ft.
+  Real radar:          green patch.
+  From weather data:   cyan (FlightGear says snow).
+  From freezing level: cyan where the beam is above 5,000 ft.
+  If the freezing level were 12,000 ft (warm), "from freezing level" shows
+  normal green/yellow, because at 8,000 ft it would be rain.
+
+
+5. IS IT CORRECT?
+-----------------
+  Snow in rain colours by strength (default)   Yes, like a real radar
+  Dry snow weaker than rain                    Yes
+  Snow not weakened again above freezing       Yes
+  Bright band (+5 dB below freezing) for rain  Yes
+  Bright band for snow volumes                 No (see S3)
+  Heavy snow strength                          Too strong (42 dBZ)
+  Cyan/white colours                           Only as a learning option
+
+
+6. WHAT COULD BE IMPROVED
+-------------------------
+  S2. Make heavy snow weaker: snow 1.0 should give about 35 dBZ (yellow)
+      at most, not 42 (red).
+  S3. Wet snow: in the 1,000 ft just below the freezing level, make snow
+      echo stronger (bright band), like the app already does for rain.
+  S4. Check FlightGear against temperature: if FlightGear says snow but
+      the beam is far below the freezing level (warm), treat it as rain.
+      This fixes FlightGear's "METAR only" snow.
+
+
+7. WHAT MORE FLIGHTGEAR CAN GIVE
+--------------------------------
+  - Temperature at each altitude (environment config "aloft" table and
+    /environment/temperature-degc): the app uses this for the freezing
+    level. Could also show the outside air temperature on screen.
+  - /environment/metar/snow-norm: how heavy the snow in the METAR is.
+  - Dew point / humidity: wet bulb temperature tells better where snow
+    melts (snow can survive a little above 0 C in dry air).
+  - A Nasal script could set the snow value of volumes from temperature
+    instead of from the METAR text.

@@ -1,0 +1,422 @@
+PLACING WEATHER ON THE MAP, AND THE FAKE PLANE
+==============================================
+
+Contents
+  0. THE WHOLE IDEA IN PICTURES (trees - read this first)
+  PART A - PLACING WEATHER
+    A1. What it is
+    A2. How to use it (step by step)
+    A3. The three storm types
+    A4. What happens in each mode
+    A5. What happens inside FlightGear
+    A6. Removing and clearing
+    A7. When FlightGear deletes a placed storm by itself
+    A8. Placed storms and the new cloud shapes
+    A9. Problems and fixes
+  PART B - THE FAKE PLANE
+    B1. What it is and why
+    B2. How to use it (step by step)
+    B3. What the fake plane sends
+    B4. Fake plane + FlightGear (weather around the fake plane)
+    B5. fake_plane.py (the same thing, outside the app)
+    B6. A real other simulator instead of the fake plane
+    B7. Problems and fixes
+  PART C - FILES
+
+
+0. THE WHOLE IDEA IN PICTURES
+-----------------------------
+
+(a) PLACING WEATHER - what a click does
+    -----------------------------------
+
+  Click on the map (mode "Add storm")
+     |
+     +-- Mode "Simulated" (no FlightGear)
+     |      -> the app adds its own storm there
+     |      -> radar shows it at once, it drifts with the wind
+     |
+     +-- Mode "FlightGear" (connected)
+     |      |
+     |      +-- Detailed Weather OFF  -> NOT placed (message tells you)
+     |      |
+     |      +-- Detailed Weather ON
+     |             -> app sends the order to FlightGear
+     |             -> FlightGear builds REAL clouds + a rain volume there
+     |             -> you SEE the clouds out of the window
+     |             -> radar shows it within a few seconds
+     |
+     +-- Mode "Other simulator (UDP)"
+            |
+            +-- FlightGear NOT connected -> NOT placed (no weather engine)
+            +-- FlightGear connected     -> same as FlightGear above
+
+
+(b) THE THREE STORM TYPES
+    ---------------------
+
+  Type
+     |
+     +-- Rain shower       2 km, rain 40 %, no turbulence, base 3000 ft
+     |                     -> green/yellow small cell
+     +-- Cumulonimbus (Cb) 3 km, rain 80 %, turbulence 60 %, base 2500 ft
+     |                     -> red core, magenta in WX+T
+     +-- Thunderstorm      5 km, rain 100 %, turbulence 80 %, base 2500 ft
+                           -> big red/magenta storm, hail and windshear
+                              possible
+  (Size, rain, turbulence and cloud base can be changed before clicking.)
+
+
+(c) REMOVING
+    --------
+
+  Remove
+     |
+     +-- "Remove storm" mode, click a storm   -> that one goes
+     +-- "Clear placed weather" button        -> ALL placed storms go
+     |      (in FlightGear also the ones from before an app restart)
+     +-- FlightGear deletes it by itself      -> when you fly away and its
+                                                 weather tile is removed;
+                                                 the map follows
+
+
+(d) THE FAKE PLANE - what it does
+    -----------------------------
+
+  "Start fake plane"
+     |
+     +-- app switches to mode "Other simulator (UDP)"
+     +-- fake plane flies (speed, turn, heading, altitude you set)
+     +-- sends its position 10 times a second over UDP (like a real sim)
+     |
+     +-- app receives it -> radar + map follow the fake plane
+            |
+            +-- FlightGear NOT connected -> radar empty (no weather engine)
+            |
+            +-- FlightGear connected (started with --fdm=null)
+                   -> app MOVES FlightGear's aircraft to the fake plane
+                   -> FlightGear builds Detailed Weather around it
+                   -> radar shows that weather
+                   -> you can place storms around the fake plane
+
+
+(e) WHY A FAKE PLANE
+    ----------------
+
+  Goal: use this radar with ANOTHER simulator (not FlightGear)
+     |
+     +-- other sim gives:   the plane's position (lat, lon, heading, alt)
+     +-- FlightGear gives:  the weather (clouds, volumes, stations)
+     +-- this app:          puts them together -> radar picture
+     |
+     +-- fake plane = stands in for the other simulator while testing,
+                      so you do not need the other simulator running
+
+
+==============================================================================
+PART A - PLACING WEATHER
+==============================================================================
+
+A1. WHAT IT IS
+--------------
+A map beside the radar (north up, your plane in the middle). You click on it
+and a storm is put exactly there. Good for training: put a storm ahead, on
+the approach path, beside the track, behind a mountain...
+
+The map shows:
+  - your plane (white) and the track you flew (last 10 minutes)
+  - the area the radar can see (green, 180 deg ahead)
+  - other weather the radar sees (faint circles)
+  - placed storms (coloured by rain: green, yellow, red, magenta) with
+    labels #1, #2, ...
+  - mouse wheel = map range (5 to 320 NM)
+
+
+A2. HOW TO USE IT (STEP BY STEP)
+--------------------------------
+  1. Press "Show weather map" (the map opens beside the radar).
+  2. "Map click": press "Add storm".   (Off = clicks do nothing, so no
+     storm by accident.)
+  3. Choose the Type: Rain shower / Cumulonimbus (Cb) / Thunderstorm.
+  4. Change if you want: Size (km radius), Rain, Turbulence, Cloud base.
+     The Rain slider shows the colour it will paint (GREEN, YELLOW, RED,
+     MAGENTA).
+  5. Click on the map where you want it. Every click adds one more storm.
+  6. Optional: tick "Hold aircraft still" first, so the plane does not fly
+     away while you place storms (in FlightGear this pauses FlightGear;
+     placing still works while paused).
+  7. Look at the radar (range 10-40 NM).
+
+
+A3. THE THREE STORM TYPES
+-------------------------
+  Type               Size   Rain   Turbulence  Base      On the radar
+  -----------------  -----  -----  ----------  --------  -----------------------
+  Rain shower        2 km   40 %   0 %         3000 ft   green/yellow small cell
+  Cumulonimbus (Cb)  3 km   80 %   60 %        2500 ft   red core, magenta WX+T
+  Thunderstorm       5 km   100 %  80 %        2500 ft   big red/magenta storm
+
+  (Size = radius. Choosing a type sets these values; you can change them.)
+
+  Rain colour guide (the slider label):
+     below 32 %         GREEN
+     32 - 57 %          YELLOW
+     57 - 82 %          RED
+     above 82 %         MAGENTA
+
+
+A4. WHAT HAPPENS IN EACH MODE
+----------------------------
+  Mode               Click does                       Seen out of window?
+  -----------------  -------------------------------  -------------------
+  Simulated          app adds its own storm, drifts   no (no FlightGear)
+                     with the wind, shows at once
+  FlightGear         FlightGear builds real clouds +  YES
+                     rain volume (needs Detailed
+                     Weather + wxradar_export.nas)
+  Other sim (UDP)    only with FlightGear connected:  YES (in FlightGear)
+                     same as FlightGear mode
+
+  Without FlightGear in UDP mode the click is refused: "connect to
+  FlightGear first" (there is nothing to build the weather).
+
+
+A5. WHAT HAPPENS INSIDE FLIGHTGEAR
+----------------------------------
+  App                                   FlightGear (wxradar_export.nas)
+  ---                                   -------------------------------
+  writes /wxradar/place/...
+    kind, lat, lon, radius, rain,
+    turbulence, base
+  writes a new number to
+    /wxradar/place/request     ----->   listener wakes up
+                                        |
+                                        +-- Detailed Weather off? -> FAILED
+                                        +-- calls FlightGear's OWN code:
+                                        |     shower      -> cumulonimbus with rain
+                                        |     cb          -> small thunderstorm
+                                        |     thunderstorm-> medium or big
+                                        |                    (big if over 5 km)
+                                        +-- sets the new volume to YOUR size,
+                                        |   rain, turbulence
+                                        +-- shower: top raised to base+10000 ft
+                                        |   (else the beam goes over it)
+                                        +-- draws the clouds NOW (not at the
+                                        |   next tile)
+                                        +-- answer in /wxradar/place/result
+  after 2.5 s reads the answer  <-----      "OK: ..." or "FAILED: ..."
+    OK     -> "The radar shows it within a few seconds"
+    FAILED -> the storm is taken off the map again
+
+  Each placed storm gets a number. Its volumes are marked "placed from map",
+  so the app can tell them from Detailed Weather's own.
+
+
+A6. REMOVING AND CLEARING
+-------------------------
+  - "Remove storm" mode, click on a placed storm: that storm is removed
+    (in FlightGear: its clouds, volumes and FlightGear radar echo).
+  - "Clear placed weather": all placed storms go. In FlightGear also the
+    ones placed before the app was restarted.
+  - The answer from FlightGear is shown under the buttons
+    ("REMOVED: 1 volume(s), 37 cloud(s)").
+
+
+A7. WHEN FLIGHTGEAR DELETES A PLACED STORM BY ITSELF
+----------------------------------------------------
+  A placed storm belongs to the FlightGear weather tile it was put in.
+  When you fly away, Detailed Weather deletes old tiles WITH their storms.
+  The app notices (the storm's number is no longer exported) and takes it
+  off the map: "#2 deleted by FlightGear: Detailed Weather removed its
+  weather tile (aircraft flew on)."
+
+
+A8. PLACED STORMS AND THE NEW CLOUD SHAPES
+------------------------------------------
+  Placed storms are built by FlightGear's own code, so they have REAL clouds.
+  With "Realistic" + "Shape from FlightGear's clouds":
+
+  Placed type        FlightGear clouds made          Counted as STORM?
+  -----------------  ------------------------------  -----------------------
+  Rain shower        Cb_box cloud + rain texture     YES (Cb_box is a shower
+                                                     Cb) -> can get hail /
+                                                     windshear if strong
+  Cumulonimbus (Cb)  Stratus base + Cumulonimbus     YES
+                     (cloudlet) tower
+  Thunderstorm       Nimbus, Stratus, thick fog,     YES
+                     Cumulonimbus tower
+
+  Note: a "Rain shower" counts as a storm because FlightGear builds it from a
+  Cb cloud. With its default 40 % rain it is too weak for hail (needs 45 dBZ
+  high up) and for a microburst (needs rain above 50 %). Raise its rain
+  above 50 % and it can make windshear.
+
+
+A9. PROBLEMS AND FIXES
+----------------------
+  "NOT placed: Detailed Weather is OFF"
+      -> Environment > Weather > Detailed Weather > Apply, then place again.
+  "No answer from FlightGear"
+      -> wxradar_export.nas not loaded: restart FlightGear (it must be in
+         fgdata\Nasal).
+  "NOT placed: connect to FlightGear first"
+      -> UDP mode without FlightGear: connect FlightGear (it builds weather).
+  Storm placed but not on the radar
+      -> wait a few seconds; range 10-40 NM; tilt (AUTO); Mode WX;
+         beam may pass over a small shower when you are high.
+  Storm disappeared
+      -> FlightGear removed its tile (you flew away), see A7.
+
+
+==============================================================================
+PART B - THE FAKE PLANE
+==============================================================================
+
+B1. WHAT IT IS AND WHY
+----------------------
+This app can show the radar for ANOTHER simulator (not FlightGear). That
+simulator only sends its plane's POSITION; FlightGear is used only as the
+WEATHER ENGINE.
+
+The fake plane pretends to be that other simulator: it flies by itself and
+sends its position exactly like a real simulator would. So you can test
+everything without the other simulator.
+
+  Other simulator / fake plane  ->  position (UDP)  ->  this app
+  FlightGear                    ->  weather          ->  this app
+  this app                      ->  radar picture
+
+
+B2. HOW TO USE IT (STEP BY STEP)
+--------------------------------
+  1. Left panel: click "Fake plane (test)" (the arrow opens the box).
+  2. Set:
+       Speed     ground speed in kt (0 = parked)
+       Turn      deg per second: + right, - left, 0 straight
+                 (3 deg/s = normal airliner turn, 2 minutes per circle)
+       Heading   true heading (0 N, 90 E, 180 S, 270 W)
+       Altitude  ft
+       Lat / Lon start position (default Delhi 28.5665 77.1031)
+  3. Press "Start fake plane".
+       -> Mode switches to "Other simulator (UDP)" by itself.
+       -> The box shows "Flying: lat lon HDG xxx  yyy kt".
+  4. Change speed / turn / heading / altitude any time: it reacts at once.
+  5. "Move plane to this position" = jump to the Lat / Lon typed.
+  6. "Stop fake plane" = it stops sending (the plane stays where it was).
+
+
+B3. WHAT THE FAKE PLANE SENDS
+-----------------------------
+  10 times a second, one JSON line over UDP to this app (port 49100 by
+  default, the "UDP port (other sim)" box):
+
+      {"lat": 28.5665, "lon": 77.1031, "hdg": 90, "alt": 5000,
+       "gs": 250, "trk": 90}
+
+  Needed:   lat, lon (deg), hdg (true heading, deg), alt (ft MSL)
+  Optional: gs (ground speed kt), trk (true track deg),
+            gnd (ground height under the plane, ft)
+
+  If no packet comes for 3 s, the link counts as lost ("no data for N s").
+
+
+B4. FAKE PLANE + FLIGHTGEAR (WEATHER AROUND THE FAKE PLANE)
+-----------------------------------------------------------
+  Without FlightGear: the radar follows the fake plane but stays EMPTY
+  (in UDP mode weather only comes from FlightGear).
+
+  With FlightGear:
+
+  fake plane position
+     |
+     +-- app MOVES FlightGear's aircraft there, 30 times a second
+     |   (smooth: between packets it flies on along the track)
+     |      |
+     |      +-- by UDP (light, smooth) needs, ONCE:
+     |      |     copy wxradar-in.xml into fgdata\Protocol
+     |      |     FlightGear option:
+     |      |     --generic=socket,in,30,127.0.0.1,5510,udp,wxradar-in
+     |      |
+     |      +-- by telnet (fallback, slower, can jerk): used by itself when
+     |            FlightGear does not follow the UDP lines for 3 s
+     |
+     +-- FlightGear builds Detailed Weather around its aircraft
+     +-- radar shows that weather, placed storms work too
+
+  FlightGear MUST start with --fdm=null, or its own flight model pulls the
+  aircraft back and it jerks (the app warns you).
+
+  Full FlightGear start options for this (Additional Settings):
+      --telnet=5401
+      --disable-real-weather-fetch
+      --fdm=null
+      --generic=socket,in,30,127.0.0.1,5510,udp,wxradar-in
+      --timeofday=noon
+      --disable-ai-traffic
+      --disable-random-objects
+      --disable-random-buildings
+      --disable-random-vegetation
+      --disable-sound
+      --fog-fastest
+      --prop:/sim/rendering/shaders/quality-level=0
+
+  Steps:
+    1. Start FlightGear with those options. Detailed Weather > Apply.
+    2. App: Mode "Other simulator (UDP)" (or just start the fake plane).
+    3. Connect to FlightGear.
+    4. Start the fake plane.
+    5. Watch "FlightGear NN frames/s" under the status:
+         green 25+ smooth, amber 15-25, red below 15 jerky.
+
+
+B5. FAKE_PLANE.PY (THE SAME THING, OUTSIDE THE APP)
+---------------------------------------------------
+  The fake plane can also run in its own window, next to the app
+  (Mode "Other simulator (UDP)"):
+
+      python fake_plane.py                          parked, heading 090
+      python fake_plane.py --gs 250 --turn 1        flying a slow circle
+      python fake_plane.py --lat 51.47 --lon -0.45 --hdg 270 --alt 3000
+
+
+B6. A REAL OTHER SIMULATOR INSTEAD OF THE FAKE PLANE
+----------------------------------------------------
+  The other simulator (or a small helper program next to it) only has to
+  send the same JSON line (B3) to this app's UDP port, several times a
+  second. Then everything works the same as with the fake plane.
+
+
+B7. PROBLEMS AND FIXES
+----------------------
+  "NOT listening on UDP port ..."
+      -> another program uses that port: change "UDP port (other sim)".
+  "waiting for data" / "no data for N s"
+      -> fake plane not started, or a different port, or a firewall.
+  Radar empty in UDP mode
+      -> connect FlightGear (it makes the weather) with Detailed Weather on.
+  "WARNING: FlightGear flight model is '...', not null"
+      -> restart FlightGear with --fdm=null.
+  "moving it by telnet (slower, can jerk)"
+      -> copy wxradar-in.xml to fgdata\Protocol and add the --generic
+         option, then restart FlightGear.
+  FlightGear frames/s red
+      -> lower FlightGear's graphics (options in B4).
+
+
+==============================================================================
+PART C - FILES
+==============================================================================
+  main.py             map panel, place buttons, fake plane box, UDP mode,
+                      moving FlightGear (_place, _unplace, _clear_placed,
+                      _check_place, _sync_placed, _build_fake_panel,
+                      _fly_fake, _update_from_udp, _drive_fg)
+  place_map.py        the map drawing (north up, range rings, storms, trail)
+  wxradar_export.nas  inside FlightGear: builds / removes placed storms
+                      (place_weather, remove_placed)
+  fg_link.py          sends place / remove orders (place_weather,
+                      remove_weather)
+  fake_plane.py       the fake plane (also runs on its own)
+  udp_link.py         receives the other simulator's position
+  fg_drive.py         moves FlightGear's aircraft (UDP or telnet)
+  wxradar-in.xml      FlightGear protocol file for the UDP position
+                      (copy to fgdata\Protocol)

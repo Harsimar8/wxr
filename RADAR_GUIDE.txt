@@ -1,0 +1,450 @@
+==============================================================================
+                 WEATHER RADAR PROJECT - SIMPLE GUIDE
+        What I have now, how it works, and what to add next
+==============================================================================
+
+CONTENTS
+  PART 1  What my radar has now
+  PART 2  How my app gets data from FlightGear
+  PART 3  What windshear / microburst is
+  PART 4  How a REAL radar finds windshear
+  PART 5  How MY app finds windshear
+  PART 6  Why FlightGear cannot give us windshear
+  PART 7  Ways to change / use FlightGear myself
+  PART 8  More DATA I can take from FlightGear
+  PART 9  More FEATURES real radars have (that I don't have yet)
+  PART 10 What to do next (best order)
+  PART 11 Best way to run FlightGear for this project
+
+
+==============================================================================
+PART 1 - WHAT MY RADAR HAS NOW
+==============================================================================
+
+Screen (display.py)
+  - Boeing/Airbus style ND: compass arc, range rings, heading, GS/TAS, wind
+  - Colours by rain strength:
+        green   20-30 dBZ   light rain
+        yellow  30-40 dBZ   moderate
+        red     40-50 dBZ   heavy
+        magenta 50+   dBZ   very heavy
+  - Snow in cyan / white: training-only checkbox, OFF (real radars cannot)
+  - Windshear (PWS) red/black wedge + WINDSHEAR text
+  - Hail icon (white upside-down triangle)
+
+Radar controls (main.py / radar.py)
+  - Modes: OFF, STBY, TEST, WX, WX+T (turbulence, magenta, within 40 NM), MAP
+  - Tilt -15..+15 deg and AUTO tilt
+  - Gain: CAL or -10..+10 dB
+  - Range: 10, 20, 40, 80, 160, 320 NM
+  - Beam 3.5 deg wide: it can go over the top of a storm (like a real radar)
+  - Attenuation (heavy rain hides what is behind it)
+  - Ground clutter and MAP mode with REAL terrain and water from FlightGear
+  - Freezing level (ice echoes weaker, bright band just below it)
+
+Weather sources
+  - Simulated (built-in storms, special shapes: hook, finger, U, scalloped)
+  - FlightGear Detailed Weather (real volumes from wxradar_export.nas)
+  - FlightGear Basic Weather (METAR / cloud layers)
+  - Place storms on the map (sent to FlightGear)
+  - Lightning strikes from FlightGear make the nearest cloud a storm core
+
+Windshear
+  - Predictive windshear (PWS): looks ahead for microbursts
+  - Voice: "Monitor radar display", "Windshear ahead", "Go around, windshear ahead"
+  - Test button: "Add microburst ahead" (built-in weather only)
+
+
+==============================================================================
+PART 2 - HOW MY APP GETS DATA FROM FLIGHTGEAR
+==============================================================================
+
+FlightGear keeps EVERY value in a big tree called the "property tree".
+Example:  /position/altitude-ft  = 3500
+You can see it all in FlightGear:  Debug > Browse Internal Properties
+
+There are 3 ways to take data out:
+
+  1) GETTING  (telnet, fg_link.py)
+     The app asks: "give me /orientation/heading-deg"  -> FlightGear answers.
+     Good for: simple values that are already in the property tree.
+
+  2) SCRIPT   (Nasal, wxradar_export.nas)
+     A small program that runs INSIDE FlightGear. It collects data that is
+     hidden inside FlightGear's own code and copies it to /wxradar/...
+     The app then GETS it from there.
+     Good for: data NOT in the property tree, big lists, heavy work.
+     My script now exports:
+        - weather volumes  -> /wxradar/volumes   (rain, snow, turb, base, top)
+        - terrain grid     -> /wxradar/terrain   (height + land/water)
+        - placing storms   -> /wxradar/place
+
+  3) UDP OUTPUT  (generic protocol, XML file in fgdata/Protocol)
+     FlightGear PUSHES values to the app many times a second.
+     Good for: values that change every frame (pitch, roll). Smooth.
+
+RULE OF THUMB
+  - Value is in the property browser       -> GET it
+  - Value is only inside Nasal code / big   -> SCRIPT it
+  - Value changes every frame               -> UDP
+
+
+==============================================================================
+PART 3 - WHAT WINDSHEAR / MICROBURST IS
+==============================================================================
+
+Windshear = the wind changes a lot over a short distance.
+
+The dangerous kind is a MICROBURST. Under a heavy rain storm, cold heavy air
+falls straight down, hits the ground and splashes out in all directions,
+like water poured from a bucket.
+
+                      THUNDERSTORM
+                 +------------------+
+                 |  rain + cold air |
+                 +------------------+
+                      |  |  |  |          (1) DOWNDRAFT
+                      v  v  v  v              air falling 10-20 m/s
+                      v  v  v  v
+       <<<<<<<<<<<<<<<<<< * >>>>>>>>>>>>>>>>>>   (2) OUTFLOW
+     ====================== GROUND ======================
+     (3) gust front                       (3) gust front
+
+Parts:
+  (1) Downdraft  - air falling 10-20 m/s, 1-2 km wide
+  (2) Outflow    - air spreading out 15-25 m/s, strongest 100-300 ft high
+  (3) Gust front - outer edge, gusty, colder
+  (4) Ring/roll  - air curling up at the edges -> turbulence
+
+Size under 4 km, lives 5-15 minutes.
+  WET microburst = with heavy rain  -> radar CAN see it
+  DRY microburst = almost no rain   -> radar can NOT see it (very dangerous)
+
+What the plane feels:
+
+  plane ->  HEADWIND        ->  DOWNDRAFT    ->  TAILWIND
+            speed goes UP       pushed DOWN      speed DROPS suddenly
+            plane floats                         plane sinks -> CRASH RISK
+
+Only dangerous LOW DOWN (takeoff / landing): no height left to recover.
+
+
+==============================================================================
+PART 4 - HOW A REAL RADAR FINDS WINDSHEAR
+==============================================================================
+
+Not every radar can. It needs a DOPPLER radar with the PWS option
+(e.g. Collins WXR-2100, Honeywell RDR-4000 on 737NG/MAX, A320, 777, 787).
+Small planes' radars cannot.
+
+Step 1  Radar sends a beam ahead (5 NM, +/-40 deg), only below 2300 ft.
+Step 2  The beam hits RAINDROPS and bounces back.
+Step 3  DOPPLER (like an ambulance siren: higher pitch coming, lower going):
+          echo higher  -> drops coming TOWARD the plane
+          echo lower   -> drops going AWAY from the plane
+        Drops move with the wind, so the radar MEASURES THE WIND.
+Step 4  Look for the pattern along one beam:
+          1 NM: drops coming at me  (+15 m/s)
+          2 NM: drops still         (0)
+          3 NM: drops going away    (-15 m/s)
+        Turn it into a number: F-FACTOR
+          F = (how fast tailwind grows) / g  -  (downdraft) / airspeed
+        F above 0.13 (over about 1 km) = DANGER
+Step 5  Warn:
+          amber WINDSHEAR  "Monitor radar display"   (3-5 NM or to the side)
+          red   WINDSHEAR  "Go around, windshear ahead"  (landing)
+                           "Windshear ahead, windshear ahead" (takeoff)
+                           (within 3 NM and +/-25 deg)
+
+Height rules:
+  above 2300 ft      -> off
+  1200 - 2300 ft     -> icon only, no text, no voice
+  below 1200 ft      -> icon + text + voice
+
+Other windshear systems in real planes:
+  - REACTIVE windshear (in GPWS): warns when ALREADY INSIDE it, from the
+    plane's own airspeed drop and sink. Says "WINDSHEAR WINDSHEAR WINDSHEAR".
+  - Airport ground systems (LLWAS sensors, TDWR radar): ATC warns pilots.
+
+
+==============================================================================
+PART 5 - HOW MY APP FINDS WINDSHEAR
+==============================================================================
+
+Same 5 steps, but Step 3 is different:
+
+  Step | Real radar                      | My app
+  -----+---------------------------------+--------------------------------------
+   1   | beam 5 NM ahead +/-40 deg       | same      (radar.py windshear())
+   2   | echo from drops                 | reads rain from FlightGear
+   3   | MEASURES wind with Doppler      | BUILDS the wind itself (model)
+       |                                 |   (weather.py outflow())
+   4   | F-factor > 0.13                 | same maths (radar.py _f_factor_hazard)
+   5   | wedge + text + voice            | same (display.py _draw_pws,
+       |                                 |       main.py _update_pws)
+
+When does my app make a microburst?
+
+  REALISTIC mode (FlightGear volumes):
+    A volume gets a microburst under it only if ALL are true:
+      - rain-flag = 1
+      - shape is circle or ellipse (not rectangle)
+      - rain above 0.5
+    Strength = 20 m/s x (how much rain is above 0.5) x (0.6 + 0.4 x turbulence)
+    More rain + more turbulence = stronger. Weak ones may not reach F 0.13.
+
+  SIMPLE mode:
+    rain 45 dBZ or more AND turbulence 0.6 or more at 500 ft = windshear.
+
+  TEST button: "Add microburst ahead" puts a strong cell 3.5 NM ahead
+  (built-in weather only, switched off when FlightGear weather is used).
+
+So: no strong rain volume  ->  no windshear.
+
+What my model has:      downdraft, outflow, strongest low down, needs rain,
+                        turbulence makes it stronger
+What it does not have:  cold air, ring/roll, life cycle (grow and die),
+                        separate microburst you can place, dry microburst
+
+
+==============================================================================
+PART 6 - WHY FLIGHTGEAR CANNOT GIVE US WINDSHEAR
+==============================================================================
+
+FlightGear's Detailed Weather is made of WEATHER VOLUMES: invisible shapes in
+the sky (circle, ellipse or box). Each one only has numbers:
+
+     position, size, shape, base height, top height
+     rain        0..1
+     snow        0..1
+     turbulence  0..1
+     visibility
+     lift        (gentle up-air for gliders)
+
+It is like a ROOM WITH A SIGN on the door: "inside: rain 0.8, turbulence 0.6".
+When your plane goes in, FlightGear switches on rain and shaking.
+
+FlightGear wind = ONE value, at the plane only:
+     /environment/wind-from-heading-deg
+     /environment/wind-speed-kt
+
+A microburst needs a DIFFERENT WIND AT EVERY POINT (down in the middle, out
+to the left, out to the right). FlightGear has nothing like that, so:
+  -> the app must BUILD the microburst wind itself
+  -> the plane in FlightGear does NOT really sink or lose speed in it
+     (only our radar warns). This can be fixed - see PART 7 / PART 10.
+
+
+==============================================================================
+PART 7 - WAYS TO CHANGE / USE FLIGHTGEAR MYSELF
+==============================================================================
+
+YES, I can change FlightGear. 4 levels, easy -> hard:
+
+  1) NASAL SCRIPTS  (EASIEST, BEST)
+     - Text files (.nas), no compiling, just restart FlightGear.
+     - I already do this: wxradar_export.nas
+     - Can READ anything inside FlightGear and WRITE values
+       (e.g. set the wind on the plane to make it feel a microburst).
+     - FlightGear's weather code is Nasal too:
+         ...\fgdata_2024_1\Nasal\local_weather\
+     - Do NOT edit FlightGear's own files. Keep my code in MY .nas file,
+       so a FlightGear update does not delete it.
+     - Test ideas fast: Debug > Nasal Console (no restart).
+
+  2) PROPERTY TREE  (no FlightGear change at all)
+     - Read / write any value from Python over telnet (fg_link.py).
+
+  3) XML FILES  (settings only)
+     - AI scenarios (AI storms, thermals), protocols (UDP), cockpit screens.
+
+  4) C++ SOURCE  (HARDEST, NOT NEEDED)
+     - Must download and compile FlightGear. Hours of setup on Windows.
+     - Nasal can do almost everything I need.
+
+Drawing shapes / images:
+  - On MY radar screen: display.py with QPainter (lines, circles, polygons,
+    text, PNG images). Write a new _draw_xxx(p) function and add one line
+    next to self._draw_pws(p). Easiest place to start.
+  - Inside FlightGear: "Canvas" (Nasal) for cockpit screens / popups,
+    3D models (Blender .ac + XML) for objects in the sky. Harder.
+
+
+==============================================================================
+PART 8 - MORE DATA I CAN TAKE FROM FLIGHTGEAR
+==============================================================================
+
+A) Through the SCRIPT (only possible this way - hidden in Nasal code)
+
+  Data                          | Where                     | Why useful
+  ------------------------------+---------------------------+----------------------
+  ** Every cloud + its TYPE     | local_weather.cloudArray  | know which cloud is a
+     (Cumulonimbus, Nimbus,     |                           | storm (Cb), real tops,
+     Cumulus...), lat/lon/alt,  |                           | real shapes, vertical
+     size                       |                           | profile, overflight
+  ** All lightning strikes      | local_weather lightning   | lightning icon on the
+     (not only the last one)    | code                      | right storm
+  Weather stations / points     | Detailed Weather          | temperature/pressure at
+                                | interpolation points      | many places -> freezing
+                                |                           | level across the map
+  Wind points (wind mode        | wind interpolation points | storms drift correctly
+  "aloft waypoints")            |                           | by height
+  Tile type of each area        | tile management           | storm area vs fair area
+  Thermals / lift areas         | lift data                 | growing storms
+
+  To check exact names: Debug > Nasal Console, type
+       debug.dump(local_weather.cloudArray[0]);
+  It prints what one cloud contains.
+  (Names other than cloudArray / effectVolumeArray must be checked there.)
+
+B) By GETTING (already in the property tree)
+
+  Data                          | Property                          | Why useful
+  ------------------------------+-----------------------------------+------------
+  ** Pitch and roll             | /orientation/pitch-deg            | beam
+                                | /orientation/roll-deg             | stabilisation
+  ** Wind / temp / turbulence   | /environment/config/aloft/entry[] | drift by
+     by height                  |                                   | height,
+                                |                                   | freezing level
+  ** Indicated airspeed         | /velocities/airspeed-kt           | reactive
+                                |                                   | windshear
+  Acceleration                  | /accelerations/pilot/x-accel-fps_sec | reactive
+                                |                                   | windshear
+  Radio height                  | /position/altitude-agl-ft         | exact PWS
+                                |                                   | 1200/2300 ft
+  Gear, flaps                   | /gear/gear[0]/position-norm       | takeoff vs
+                                | /surface-positions/flap-pos-norm  | landing
+  Wind near ground              | /environment/config/boundary/entry[] | PWS
+
+C) WRITING to FlightGear (to make the plane FEEL a microburst)
+     /environment/wind-from-north-fps
+     /environment/wind-from-east-fps
+     /environment/wind-from-down-fps    (up/down air)
+  Best done from a Nasal script (Detailed Weather also writes the wind, so
+  they might fight - needs testing).
+
+Already taken (no need to add): position, heading, altitude, ground height,
+GS, TAS, vertical speed, wind at plane, temperature, dewpoint, visibility,
+rain/snow/turb at plane, volumes, clouds, lightning (last), METAR, terrain.
+
+
+==============================================================================
+PART 9 - MORE FEATURES REAL RADARS HAVE (I DON'T HAVE YET)
+==============================================================================
+
+  1) VERTICAL PROFILE VIEW  (A350/A380, 787, Honeywell IntuVue)
+     Small screen showing storms FROM THE SIDE along my track:
+     base, TOPS, freezing level, my height line.
+     -> see if I go OVER, UNDER or THROUGH. Biggest modern upgrade.
+     Data: volume base/top (have it), cloudArray (better).
+
+  2) ATTENUATION ALERT  (Collins "PAC" yellow arc, Honeywell "REACT" cyan)
+     Heavy rain blinds the radar behind it. Real radars MARK that area.
+     Data: I already simulate attenuation - just need to draw it.
+
+  3) STORM TOP LABELS  (Collins MultiScan, 787)
+     Small number on each storm, e.g. +380 = top 38,000 ft.
+     Data: volume top-altitude-ft (have it).
+
+  4) LIGHTNING ICON  (Honeywell IntuVue)
+     Lightning symbol on cells with lightning.
+     Data: FlightGear lightning (already read, not drawn).
+
+  5) OVERFLIGHT PROTECTION / SECONDARY WEATHER  (Collins MultiScan)
+     Storms BELOW me (beam goes over them) shown dotted, not hidden.
+
+  6) GROUND CLUTTER SUPPRESSION (GCS)  - button to remove ground echoes.
+
+  7) ELEVATION MODE (Honeywell) - show weather at a chosen altitude (FL250).
+
+  8) REACTIVE WINDSHEAR - "WINDSHEAR WINDSHEAR WINDSHEAR" when inside it.
+
+  9) WEATHER HOLD / FREEZE - freeze the picture to study it.
+
+ 10) DEVIATION GUIDE (training aid) - show safe way around: go upwind,
+     keep 20 NM from red/magenta.
+
+ 11) PLACED MICROBURST - put a microburst on the map myself (wet or dry),
+     instead of every heavy rain having one. More realistic training.
+
+  Feature                   | Benefit   | Effort      | Data ready?
+  --------------------------+-----------+-------------+---------------------
+  Attenuation alert         | High      | Easy        | yes (already computed)
+  Storm top labels          | High      | Easy        | yes (volume tops)
+  Lightning icon            | Medium    | Easy        | yes (already read)
+  Placed microburst         | High      | Medium      | app-made
+  Vertical profile view     | Very high | Medium-hard | yes (base/top)
+  Overflight protection     | High      | Medium      | yes
+  Reactive windshear        | Medium    | Easy        | needs airspeed
+  GCS                       | Medium    | Easy        | yes
+  Elevation mode            | Medium    | Medium      | yes
+
+
+==============================================================================
+PART 10 - WHAT TO DO NEXT (BEST ORDER)
+==============================================================================
+
+Quick wins (data already there):
+  1. Attenuation alert (PAC/REACT)        - draw where radar is blind
+  2. Storm top labels                     - number on each storm
+  3. Lightning icon                       - lightning symbol on storms
+
+Better data:
+  4. Export cloudArray in wxradar_export.nas  - real storm types and tops
+  5. Pitch + roll (UDP)                       - beam stabilisation in turns
+  6. Aloft table (getting)                    - wind/temp by height
+
+Full windshear experience:
+  7. Placed microburst on the map (wet / dry)
+  8. Make the plane FEEL it (Nasal writes wind-from-down-fps etc.)
+  9. Reactive windshear "WINDSHEAR WINDSHEAR WINDSHEAR"
+
+      You place microburst  ->  radar sees it: amber/red WINDSHEAR
+      ->  you ignore it, fly in  ->  plane really sinks, speed drops
+      ->  "WINDSHEAR, WINDSHEAR, WINDSHEAR"
+
+Big feature:
+ 10. Vertical profile view
+
+
+==============================================================================
+PART 11 - BEST WAY TO RUN FLIGHTGEAR FOR THIS PROJECT
+==============================================================================
+
+SETUP A - fly in FlightGear itself (best for testing)
+
+  1. Launcher > Settings > Additional Settings:
+        --telnet=5401
+        --disable-real-weather-fetch
+        --disable-ai-traffic
+        --disable-random-buildings
+        --disable-random-vegetation
+        --fog-fastest
+  2. Environment > Weather > DETAILED WEATHER (not Basic)
+     Tile: "Thunderstorms" or "Cold front" for storms, "Fair weather" to
+     check nothing false appears. Click Apply.
+  3. Put wxradar_export.nas in ...\fgdata_2024_1\Nasal\  (loads at start).
+  4. Aircraft: 737-800 / A320 (real approach speeds), Cessna 172 (easy,
+     slow), UFO (move anywhere fast to look at storms).
+  5. Keep FlightGear at 25+ FPS (app shows FPS green/amber/red).
+
+SETUP B - FlightGear only as weather for another simulator
+  Use the options in README.md (--fdm=null, --generic=...wxradar-in, etc.)
+
+Useful FlightGear tools
+  Debug > Browse Internal Properties  - see every value live
+  Debug > Nasal Console               - run Nasal without restart
+  Environment > Weather               - change storms live
+  Environment > Time Settings         - daytime, to see clouds
+  P key                               - pause and compare radar with clouds
+
+Routine
+  1. Start FlightGear  2. Detailed Weather > Thunderstorms > Apply
+  3. Start app > Connect  4. Check volumes on radar
+  5. Fly toward a red cell at about 800 ft  6. Watch for WINDSHEAR
+
+First thing to check if the radar shows nothing:
+  Property browser > /wxradar/volumes/count
+  If 0 -> export script not running, or Detailed Weather is off.
+
+==============================================================================

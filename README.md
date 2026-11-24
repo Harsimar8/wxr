@@ -42,7 +42,18 @@ range rings, GS/TAS and wind). The radar annunciation (for example
 - **Range**: 10, 20, 40, 80, 160 or 320 NM.
 
 Colors follow reflectivity: green 20-30 dBZ, yellow 30-40, red 40-50,
-magenta 50+ (snow is cyan, mixed rain and snow is white). The beam is 3.5
+magenta 50+. Rain and snow are both coloured by strength only, as a real
+aircraft radar shows them: it cannot tell snow from rain (dry snow is just
+weaker, so mostly green).
+
+- **Show snow in cyan/white (training only)** checkbox (under the knobs, off by
+  default). Real radars do not have this. When ticked: green or yellow echo
+  where the beam centre is above the freezing level (of that area) is cyan
+  (snow/ice); in the 1000 ft below it white (melting snow, the bright band).
+  Red and magenta stay (a strong echo up there is hail or a violent core).
+  Needs the freezing level; without it nothing changes.
+
+The beam is 3.5
 degrees wide and only sees weather at the heights it passes through, so a
 storm can be missed if the beam goes over its top. Simulated storms get a
 height from their strength. FlightGear weather volumes use their own base and
@@ -86,11 +97,11 @@ only.
    - Scenario, storm strength, coverage and "Regenerate storms" are locked.
      If the METAR changes inside FlightGear, they update to match it.
    - Snow in the METAR is read too: `SN`/`SG` (any intensity, also `SHSN`,
-     `TSSN`) gives snow (cyan, weaker echo), and rain with snow (`RASN`)
-     gives mixed (white). The **Precipitation** box shows which one.
+     `TSSN`) gives snow (weaker echo; cyan with `From weather data`), and rain with
+     snow (`RASN`) gives mixed (white with `From weather data`). The **Precipitation** box shows which one.
    - FlightGear's exported weather volumes (`/wxradar/volumes`) are checked
-     every 2 s in either weather mode. Rain is green/yellow/red, snow is cyan,
-     mixed rain and snow is white, and strong turbulence can be magenta in TURB
+     every 2 s in either weather mode. Rain and snow are green/yellow/red by strength
+     (cyan/white only with the "Show snow in cyan/white (training only)" checkbox), and strong turbulence can be magenta in TURB
      mode. This requires `wxradar_export.nas` to keep the volume properties
      updated; the radar only draws areas FlightGear exports as spatial volumes.
    - If no volumes are exported, **Basic Weather** falls back to approximate
@@ -126,6 +137,16 @@ only.
   Simulated mode, set it in the Weather box). Above it rain is ice and shows
   about 7 dB weaker; just below it melting snow shows about 5 dB stronger
   (the bright band).
+- **Shape from FlightGear's clouds** (Realistic echo shape): `wxradar_export.nas`
+  also exports Detailed Weather's clouds (`/wxradar/clouds/data`). Each rain
+  volume's echo is drawn where its clouds are, strongest where they are packed,
+  up to the real cloud top; the volume still gives the strength. Volumes with a
+  Cumulonimbus cloud are storms: only they get WX+T turbulence, the hail icon
+  and the microburst (on the storm's core). See `docs/07_clouds_and_freezing_level.txt`.
+- **Freezing level per area**: `wxradar_export.nas` also exports every tile's
+  weather station (`/wxradar/stations/data`). The freezing level of each area
+  is moved up/down by how much warmer/colder its station is (about 1000 ft per
+  2 °C), for ice, the bright band, snow colours and the hail icon.
 - **Real terrain**: `wxradar_export.nas` also builds a 90 x 90 NM grid of
   terrain height and land/water around the aircraft (rebuilt every 6 NM or
   60 s). Ground clutter and MAP mode then show real hills, mountains and

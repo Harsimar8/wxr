@@ -1,0 +1,115 @@
+WINDSHEAR (PREDICTIVE WINDSHEAR, PWS)
+=====================================
+
+1. WHAT IS IT
+-------------
+A MICROBURST is a strong downdraft under a storm. The air falls to the
+ground and spreads out in all directions, like water from a tap hitting a
+sink.
+
+A plane flying through it on approach:
+  1. first gets a HEADWIND  -> speed goes up, plane goes high,
+  2. then a DOWNDRAFT       -> pushed down,
+  3. then a TAILWIND        -> speed drops a lot, plane sinks.
+Low down, near the runway, this can crash an aircraft. That is why
+windshear warnings exist.
+
+
+2. HOW A REAL RADAR DOES IT
+---------------------------
+Predictive Windshear (PWS) is a special mode of the weather radar.
+  - Works by itself below about 2,300 ft above the ground, whatever mode
+    the pilot selected.
+  - Scans 5 NM ahead, +/- 40 degrees.
+  - Uses DOPPLER on the rain drops: drops on one side of the cell rush
+    TOWARDS the plane (headwind), on the other side AWAY (tailwind).
+  - From this it computes the "F-factor": how much the wind change will
+    rob the plane of energy. About 0.1 - 0.15 averaged over about 1 km
+    is dangerous (the exact certified number is not public).
+  - Needs SOME rain to measure. A DRY microburst (no rain) is invisible
+    to it.
+  - Alerts only below 1,200 ft:
+      WARNING (red, voice "WINDSHEAR AHEAD" / "GO AROUND, WINDSHEAR
+      AHEAD"): close and nearly straight ahead.
+         Take-off: within about 3 NM.   Landing: within about 1.5 NM.
+         +/- 25 degrees.
+      CAUTION (amber, "MONITOR RADAR DISPLAY"): farther out, +/- 40 deg.
+  - Alerts are switched OFF:
+      on take-off from 100 kt until 50 ft (too busy, can't stop anyway),
+      on landing below 50 ft.
+  - On the screen: red/black striped icon with two amber lines.
+  - ONLY SOME storms have microbursts.
+
+There is also REACTIVE windshear (not the radar): the flight computer
+feels the windshear when the plane is already in it.
+
+
+3. HOW OUR APP DOES IT
+----------------------
+Code: radar.py, functions windshear() and _f_factor_hazard().
+
+  - Active below 2,300 ft above ground, alerts below 1,200 ft.      [real]
+  - Looks 5 NM ahead, +/- 40 degrees.                              [real]
+  - Warning: within 3 NM and +/- 25 deg, else caution.             [part]
+  - Voice messages, red/black icon, amber lines.                   [real]
+  - Needs rain.                                                    [real]
+
+How it finds a microburst - two ways:
+  a) REALISTIC mode: the app makes a wind outflow under rain volumes,
+     then computes the F-factor along each beam like Doppler, averaged
+     over 0.5 NM (about 1 km). F >= 0.13 = hazard.
+  b) FLAT / SIMULATED: simple rule. At 500 ft above ground:
+     rain 45 dBZ or more AND turbulence 0.6 or more = microburst.
+
+Example: you descend at 1,000 ft, a FlightGear thunderstorm (rain 0.8 =
+49 dBZ, turbulence 0.6) is 2 NM ahead.
+  49 >= 45 and 0.6 >= 0.6 -> microburst.
+  2 NM ahead, straight ahead, below 1,200 ft -> red WARNING
+  "GO AROUND, WINDSHEAR AHEAD".
+  (Real radar: only if that storm really had a microburst.)
+
+Test in Simulated mode: altitude below 1,200 ft, press
+"Add microburst ahead".
+
+
+4. IS IT CORRECT?
+-----------------
+  2,300 / 1,200 ft, 5 NM, +/- 40 deg           Yes
+  F-factor (Realistic mode)                     Yes, the real method
+  Simple rule (Flat / Simulated)                Not Doppler, a stand-in
+  Needs rain                                    Yes
+  Landing warning only within 1.5 NM            No (always 3 NM)
+  Alerts off 100 kt-50 ft and below 50 ft       No
+  Only some storms have microbursts             No - EVERY heavy FlightGear
+                                                storm counts, too many
+                                                alerts
+  Dry microburst invisible                      Can't be tested
+
+
+5. WHAT COULD BE IMPROVED
+-------------------------
+  W1. Landing: warning within 1.5 NM. Take-off: within 3 NM.
+  W2. Switch alerts off from 100 kt to 50 ft on take-off and below 50 ft
+      on landing.
+  W3. Not every storm is a microburst: only the strongest (heavy rain AND
+      strong turbulence AND maybe strong downdraft), or only ones you place
+      as "Microburst" on the map.
+  W4. Dry microburst test: a downdraft without rain - the radar should
+      show NOTHING (good lesson).
+  W5. Show the F-factor number in a debug line, to learn what it means.
+
+
+6. WHAT MORE FLIGHTGEAR CAN GIVE
+--------------------------------
+  - Volume "lift" value: negative lift = DOWNDRAFT. A heavy-rain volume
+    with strong negative lift near the ground is a much better microburst
+    sign than turbulence.
+  - Wind at each altitude (boundary layer and aloft tables): real wind
+    change with height (low-level windshear without storms).
+  - Aircraft speed and vertical speed (/velocities/...): needed for
+    the F-factor and to know take-off vs landing.
+  - /gear/gear/wow (weight on wheels) and airspeed: to switch alerts off
+    at the right moments (W2).
+  - FlightGear has no real microburst winds. A Nasal script could add a
+    wind outflow around a storm, so the FlightGear aircraft really feels
+    the headwind/tailwind that the radar predicted.

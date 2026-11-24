@@ -159,6 +159,28 @@ class MainWindow(QMainWindow):
         shape_row.addStretch()
         shape_group.buttonClicked.connect(self._shape_changed)
         f.addRow("Echo shape", shape_row)
+        # Better FlightGear data from wxradar_export.nas (Detailed Weather only).
+        self.cloud_shapes = QCheckBox("Shape from FlightGear's clouds")
+        self.cloud_shapes.setChecked(True)
+        self.cloud_shapes.setToolTip(
+            "Realistic only. The echo is drawn where FlightGear's clouds are (the "
+            "ones you see out of the window), strongest where they are packed, up "
+            "to the real cloud top.\nThe volume still gives the strength. Hail, "
+            "microburst windshear and WX+T turbulence only on real storms "
+            "(Cumulonimbus clouds).\nVolumes without clouds keep their own shape. "
+            "Needs the new wxradar_export.nas.")
+        self.area_freezing = QCheckBox("Freezing level per area")
+        self.area_freezing.setChecked(True)
+        self.area_freezing.setToolTip(
+            "Each Detailed Weather tile has its own weather station and temperature."
+            "\nThe freezing level of each area is moved up/down by how much warmer/"
+            "colder its station is (about 1000 ft per 2 degC).\nUsed for ice, the "
+            "bright band, snow colours and the hail icon. Needs the new "
+            "wxradar_export.nas.")
+        for b in (self.cloud_shapes, self.area_freezing):
+            b.toggled.connect(self._shape_changed)
+            f.addRow(b)
+        self.cloud_shapes.setEnabled(self.shape_realistic.isChecked())
         panel.addWidget(src)
         panel.addWidget(self._build_fake_panel())
 
@@ -1002,8 +1024,20 @@ class MainWindow(QMainWindow):
             "Manual Configuration cloud layers are not affected. "
             "With another simulator (UDP) only real volumes are ever shown.")
         self.fallback_wx.toggled.connect(lambda _on: self.full_refresh())
+        # Off = like a real radar: rain and snow both by strength only.
+        self.snow_colors = QCheckBox("Show snow in cyan/white (training only)")
+        self.snow_colors.setChecked(False)
+        self.snow_colors.setToolTip(
+            "Real aircraft radars CANNOT show snow in another colour: rain and "
+            "snow are both green/yellow/red by strength.\nTick this only to learn: "
+            "green/yellow echo where the beam is above the freezing level is cyan "
+            "(snow/ice), in the 1000 ft below it white (melting snow, bright band).\n"
+            "Red and magenta stay. Uses the freezing level of each area. Needs the "
+            "freezing level.")
+        self.snow_colors.toggled.connect(lambda _on: self.full_refresh())
         save = QPushButton("Save radar image")
         save.clicked.connect(self.save_image)
+        v.addWidget(self.snow_colors)
         v.addWidget(self.atten)
         v.addWidget(self.fallback_wx)
         v.addWidget(save)
@@ -1096,6 +1130,10 @@ class MainWindow(QMainWindow):
     def _shape_changed(self, *_):
         """Echo shape switched: redraw FlightGear's volumes the new way."""
         self.fg_weather.realistic = self.shape_realistic.isChecked()
+        self.fg_weather.cloud_shapes = self.cloud_shapes.isChecked()
+        self.fg_weather.area_freezing = self.area_freezing.isChecked()
+        self.cloud_shapes.setEnabled(self.shape_realistic.isChecked())
+        self.fg_weather._cache = (None, None, None, None)   # shapes drawn the new way
         self.pws_next = 0.0             # look for windshear again at once
         self.full_refresh()
 
@@ -1255,6 +1293,8 @@ class MainWindow(QMainWindow):
                      ("Thunderstorms at station", "yes" if s.get("stn_thunder") else "no"),
                      ("Cloud layers", ", ".join(layers) or "none"),
                      ("Storm clouds read", str(len(s.get("clouds") or {}))),
+                     ("Cloud pieces (export)", self._cloud_text(s)),
+                     ("Weather stations", self._station_text(s)),
                      ("Their altitude", "?" if not alt else
                       (f"{alt[0]:.0f} ft" if alt[0] == alt[1]
                        else f"{alt[0]:.0f} - {alt[1]:.0f} ft")),
@@ -1278,6 +1318,30 @@ class MainWindow(QMainWindow):
 
         html = "".join(f"<tr><td>{a}</td><td>{b}</td></tr>" for a, b in rows)
         self.fg_wx.setText(f"<table cellspacing='2'>{html}</table>")
+
+    def _cloud_text(self, s):
+        """How many clouds wxradar_export.nas sent, and the storms found."""
+        c = s.get("cloud_export")
+        if not c:
+            return "none (needs the new wxradar_export.nas)"
+        text = f"{len(c['east_m'])}"
+        storms = self.fg_weather.storm_count()
+        if storms is not None:
+            shaped = sum(1 for item in self.fg_weather.volumes if item["cloud"])
+            text += f", shaping {shaped} volume(s), {storms} storm(s) (Cb)"
+        return text
+
+    def _station_text(self, s):
+        """Weather stations and the spread of their freezing levels."""
+        st = s.get("stations") or []
+        if not st:
+            return "none (needs the new wxradar_export.nas)"
+        temps = [x["T"] for x in st]
+        text = f"{len(st)}, sea-level {min(temps):.0f} to {max(temps):.0f} °C"
+        fr = self.fg_weather.freezing_range()
+        if fr is not None:
+            text += f", freezing {fr[0]:,.0f} - {fr[1]:,.0f} ft"
+        return text
 
     def _wx_state(self):
         """What the app's weather looks like: same storms, scenario and strength."""
@@ -1329,6 +1393,7 @@ class MainWindow(QMainWindow):
             freezing_ft=self.freezing_ft,
             terrain=self.terrain if connected else None,
             rays=rays,
+            snow_colors="freezing" if self.snow_colors.isChecked() else "off",
         )
 
     def _update_from_fg(self, follow_weather=True):
@@ -1392,7 +1457,10 @@ class MainWindow(QMainWindow):
         self.fg_weather.update(
             s.get("weather_volumes", []),
             self.origin,
-            s.get("alt_ft", 0.0)
+            s.get("alt_ft", 0.0),
+            clouds=s.get("cloud_export"),
+            stations=s.get("stations"),
+            here=(self.ax, self.ay),
         )
         self._check_lw_built(s)
         if s is not self.shown_state:   # new values from FlightGear

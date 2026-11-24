@@ -1,6 +1,8 @@
 # Weather radar exporter for the wx_radar app.
 #
 # Every 2 s: copies Detailed Weather's effect volumes to /wxradar/volumes.
+# Every 5 s: its clouds (/wxradar/clouds/data) and weather stations
+# (/wxradar/stations/data), for the echo shape and the freezing level per area.
 # All the time, a little per frame: builds a terrain grid around the aircraft
 # (height and land/water) and puts it in /wxradar/terrain/data.
 # On request: places a rain shower, Cb or thunderstorm (see place_weather).
@@ -65,6 +67,86 @@ var volume_loop = func {
     call(export_volumes, [], nil, nil, var err = []);
     if (size(err)) logprint(LOG_WARN, "wxradar_export volumes: ", err[0]);
     settimer(volume_loop, 2, 1);
+};
+
+# ------------------------------------------------------------------- clouds
+# Every 5 s: the clouds Detailed Weather has drawn (its cloud objects, in
+# weather_tile_management.cloudArray) near the aircraft, as one text line:
+#   /wxradar/clouds/data = "lat0,lon0|type0;type1;...|east,north,alt,width,height,type;..."
+# east/north: metres from lat0/lon0, alt in ft, width/height in metres, type =
+# its number in the type list. The app draws the echo's shape from these.
+# High, thin clouds (cirrus and the like) give no radar echo: left out.
+var CLOUD_RANGE_M = 120000;     # about 65 NM: tiles only reach about 40 NM
+var CLOUD_MAX = 4000;           # keep the text small and quick to read
+var SKIP_TYPES = ["Cirrus", "Cirrocumulus", "Cirrostratus", "Noctilucent",
+                  "Altocumulus", "Cumulus (whisp)", "Fog (thin)", "Fogpatch",
+                  "Impostor", "Test", "Box_test"];
+
+var skip_type = func(type) {
+    foreach (var s; SKIP_TYPES)
+        if (find(s, type) == 0) return 1;
+    return 0;
+};
+
+var export_clouds = func {
+    var arr = [];
+    if (contains(globals, "weather_tile_management")
+        and contains(weather_tile_management, "cloudArray"))
+        arr = weather_tile_management.cloudArray;
+    var lat0 = getprop("/position/latitude-deg");
+    var lon0 = getprop("/position/longitude-deg");
+    var m_lat = 111120.0;                       # metres per degree of latitude
+    var m_lon = m_lat * math.cos(lat0 * D2R);
+    var types = {};
+    var names = [];
+    var out = [];
+    foreach (var c; arr) {
+        if (size(out) >= CLOUD_MAX) break;
+        if (!contains(c, "lat") or !contains(c, "lon") or !contains(c, "alt")
+            or !contains(c, "type") or c.lat == nil or c.lon == nil or c.type == nil)
+            continue;
+        if (skip_type(c.type)) continue;
+        var e = (c.lon - lon0) * m_lon;
+        var n = (c.lat - lat0) * m_lat;
+        if (math.abs(e) > CLOUD_RANGE_M or math.abs(n) > CLOUD_RANGE_M) continue;
+        if (!contains(types, c.type)) {
+            types[c.type] = size(names);
+            append(names, c.type);
+        }
+        var w = (contains(c, "min_cloud_width") and c.min_cloud_width != nil) ? c.min_cloud_width : 1000;
+        var h = (contains(c, "min_cloud_height") and c.min_cloud_height != nil) ? c.min_cloud_height : 800;
+        append(out, sprintf("%d,%d,%d,%d,%d,%d", e, n, c.alt or 0, w, h, types[c.type]));
+    }
+    setprop("/wxradar/clouds/data", sprintf("%.6f,%.6f", lat0, lon0) ~ "|"
+            ~ string.join(";", names) ~ "|" ~ string.join(";", out));
+    setprop("/wxradar/clouds/count", size(out));
+    setprop("/wxradar/clouds/total", size(arr));
+};
+
+# ---------------------------------------------------------- weather stations
+# Detailed Weather puts one weather station in every tile (temperature T and
+# dew point D in degC at sea level, pressure p in inHg, alt = its height in ft).
+#   /wxradar/stations/data = "lat,lon,alt,T,D,p;..."
+var export_stations = func {
+    var arr = [];
+    if (contains(globals, "local_weather") and contains(local_weather, "weatherStationArray"))
+        arr = local_weather.weatherStationArray;
+    var out = [];
+    foreach (var s; arr)
+        if (s.lat != nil and s.lon != nil and s.T != nil)
+            append(out, sprintf("%.5f,%.5f,%.0f,%.2f,%.2f,%.2f",
+                                s.lat, s.lon, s.alt or 0, s.T, s.D or 0, s.p or 0));
+    setprop("/wxradar/stations/data", string.join(";", out));
+    setprop("/wxradar/stations/count", size(out));
+};
+
+var cloud_loop = func {
+    if (!alive()) return;
+    call(export_clouds, [], nil, nil, var err = []);
+    if (size(err)) logprint(LOG_WARN, "wxradar_export clouds: ", err[0]);
+    call(export_stations, [], nil, nil, var err2 = []);
+    if (size(err2)) logprint(LOG_WARN, "wxradar_export stations: ", err2[0]);
+    settimer(cloud_loop, 5, 1);
 };
 
 # ---------------------------------------------------------------- terrain grid
@@ -403,4 +485,5 @@ setlistener("/wxradar/place/remove-request", func(n) {
 }, 0, 1);
 
 settimer(volume_loop, 2, 1);
+settimer(cloud_loop, 4, 1);
 settimer(terrain_loop, 3, 1);

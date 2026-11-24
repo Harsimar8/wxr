@@ -1,0 +1,163 @@
+TILT, THE BEAM, AND GROUND ECHO
+===============================
+
+PART 1 - WHAT IS TILT
+---------------------
+TILT = aiming the radar UP or DOWN, like nodding your head.
+  Tilt  0      = straight ahead (level)
+  Tilt -2      = 2 degrees down
+  Tilt +3      = 3 degrees up
+  Knob: -15 to +15 degrees.
+
+
+PART 2 - THE BEAM IS A CONE, NOT A LINE
+---------------------------------------
+The beam is 3.5 degrees wide. It is thin near the plane and gets very
+TALL far away, like torch light on a wall.
+
+  Seen from the SIDE:
+
+            ____------------ top of beam
+   PLANE <<
+            ----____________ bottom of beam
+
+   Distance     How tall the beam is
+   10 NM         3,700 ft
+   40 NM        15,000 ft
+   80 NM        30,000 ft
+
+Also the EARTH IS ROUND: far away, the ground curves down under the beam
+(about 4,200 ft lower at 80 NM). So a level beam is high above the ground
+far away.
+
+The radar only sees rain INSIDE the cone. Rain above or below the cone is
+invisible.
+
+HOW TILT AND THE CONE GO TOGETHER
+  Tilt = where the CENTRE LINE of the cone points.
+  The cone is 3.5 deg wide = 1.75 deg ABOVE the centre + 1.75 deg BELOW.
+
+    Tilt -1:   top edge    -1 + 1.75 = +0.75 deg (a little UP)
+               centre      -1        = -1    deg
+               bottom edge -1 - 1.75 = -2.75 deg (DOWN)
+
+  Easy rule: 1 degree = 106 ft for every NM of distance.
+    at 20 NM, 1 deg =  2,100 ft
+    at 40 NM, 1 deg =  4,200 ft
+    at 80 NM, 1 deg =  8,500 ft
+  (plus the round earth: the ground is lower far away, so the beam is
+   that much higher above it: +260 ft at 20 NM, +1,060 at 40, +4,230 at 80)
+
+  Plane at 30,000 ft, tilt -1:
+    Distance   Bottom edge   Centre      Top edge
+    20 NM      24,400 ft     28,100 ft   31,900 ft
+    40 NM      19,400 ft     26,800 ft   34,200 ft
+    80 NM      10,900 ft     25,700 ft   40,600 ft
+
+  Note: outside the 3.5 deg cone the beam does not stop at once; it gets
+  weaker. The app counts these weak edges too (up to 2.6 deg each side).
+  AUTO puts this WEAK outer edge on the ground, not the 3.5 deg edge.
+
+
+PART 3 - EXAMPLE: SAME STORMS, THREE TILTS
+------------------------------------------
+Plane at 30,000 ft. A storm 80 NM ahead, rain from the ground up to
+25,000 ft.
+
+  Tilt +2 (too high):
+     beam at 80 NM covers 36,000 ft to 66,000 ft
+     storm top is 25,000 ft -> beam passes OVER it -> SCREEN EMPTY.
+     DANGER: you think there is no storm.
+
+  Tilt -1 (good, this is what AUTO picks):
+     beam at 80 NM covers 11,000 ft to 41,000 ft
+     storm 0-25,000 ft -> beam is in the storm -> STORM SHOWN.
+
+  Tilt -3 (too low):
+     beam at 80 NM covers -6,000 ft (below ground!) to 24,000 ft
+     beam hits the ground -> GROUND ECHO everywhere, the storm is mixed
+     with ground and hard to see.
+
+  BUT, a trap: with tilt -1, look at a storm only 20 NM ahead:
+     beam at 20 NM covers 24,000 ft to 32,000 ft
+     a smaller storm with top at 20,000 ft is UNDER the beam -> MISSED.
+     That is why pilots tilt down from time to time to check close
+     storms.
+
+  Picture (side view, tilt -1):
+
+   30,000 ft  PLANE >======___________________________  top of beam
+                       \___________                 \______
+                           \_______  ___ beam ___          \______
+   24,000 ft ......... beam bottom at 20 NM               storm 80 NM
+                                    \_______                ###
+   20,000 ft    ###  <- small storm      \_______           ###
+                ###     at 20 NM: MISSED       \______      ###  SEEN
+                ###                                  \_____ ###
+   ground  ____________________________________________________
+
+
+PART 4 - HOW REAL PILOTS USE TILT (Airbus advice)
+-------------------------------------------------
+  - Cruise: aim so a little GROUND echo appears at the far edge of the
+    screen. Then you know the beam is low enough to catch storms.
+  - Tilt up and down from time to time:
+      echo disappears when you tilt up a little -> LOW top (less danger)
+      echo stays when you tilt up               -> TALL storm (danger)
+  - A quiet screen at high altitude is NOT proof of no storms. The beam
+    may be passing over them.
+
+
+PART 5 - GROUND ECHO (CLUTTER)
+------------------------------
+When the beam hits the ground, the ground also sends an echo back.
+  Mountains, cities   -> strong (yellow/red)
+  Flat land           -> weaker (green)
+  Water (sea, lakes)  -> almost NOTHING (beam bounces away like light on a
+                         mirror) -> so you can see COASTLINES.
+  Behind a mountain   -> nothing (the mountain blocks the beam: shadow)
+
+MAP mode uses this on purpose to see the ground (cyan/yellow/magenta).
+
+
+PART 6 - HOW OUR APP DOES IT
+----------------------------
+  - Tilt knob -15 to +15 (AUTO off), or AUTO (see 05 file).
+  - Beam 3.5 deg wide, strongest in the middle, weaker at the edges
+    (the app checks 7 heights across the cone and mixes them).
+  - Round earth included.
+  - FlightGear weather: each volume has a BASE and TOP height, so the
+    beam really misses a storm whose top is below the beam.
+  - Simulated storms: stronger storm = taller storm.
+  - Ground: with FlightGear real terrain -> mountains bright, water dark,
+    mountain shadows. Without it -> a made-up patchy ground.
+
+
+PART 7 - IS OUR APP CORRECT?
+----------------------------
+  Tilt -15..+15, beam 3.5 deg            YES
+  Beam strongest in the middle           YES
+  Round earth                            YES
+  Storm missed when beam goes over       YES
+  Ground echo, water dark, shadows       YES
+  Beam stays level in turns/climbs       NO (app thinks plane is level)
+  Small ring of ground echo at the
+  distance = your height ("side lobe")   NO
+
+
+PART 8 - WHAT COULD BE IMPROVED
+-------------------------------
+  M1. Pitch/roll stabilisation (same as T1 in file 05).
+  M2. The small ground ring right under the plane (side lobe).
+  M3. A SIDE VIEW window: draw the beam cone and the storms from the side
+      (like the picture in Part 3), so you SEE why a storm is missed.
+  M4. A hint on screen: "Beam over storm top?" when that happens.
+
+
+PART 9 - WHAT FLIGHTGEAR / THE SIMULATOR CAN GIVE
+-------------------------------------------------
+  Pitch and roll (/orientation/...)              -> M1
+  Height above ground (/position/altitude-agl-ft)
+  Terrain heights and water (already sent)       -> ground echo
+  Volume base and top heights (already used)     -> missed storms
+  Cloud positions and sizes (/local-weather/clouds) -> better storm tops
