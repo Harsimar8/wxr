@@ -21,6 +21,7 @@ Files:
                        (clouds + freezing level per area), how to run it
   09_placing_weather_and_fake_plane.txt   Placing storms on the map, and
                        the fake plane (other simulator over UDP)
+  10_COMPLETE_APP_GUIDE.txt   THE WHOLE APP in one file (all points)
   (this file)          The basics + turbulence and gain in short
 
 

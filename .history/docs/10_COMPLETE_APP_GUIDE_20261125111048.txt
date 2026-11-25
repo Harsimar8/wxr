@@ -1,0 +1,837 @@
+==============================================================================
+              WEATHER RADAR APP - COMPLETE GUIDE (ALL POINTS)
+                         (state on 25 Nov 2026)
+==============================================================================
+
+CONTENTS
+   1. What this app is
+   2. The big picture (one drawing)
+   3. How a weather radar works (basics)
+   4. The radar screen - what you see
+   5. The radar controls (panel)
+   6. The 3 ways to run the app (modes)
+   7. Where the weather comes from (all sources)
+   8. FlightGear: what it gives, how we take it
+   9. Echo shape: Real data / Realistic / clouds
+  10. Freezing level (one value and per area)
+  11. Snow
+  12. Hail
+  13. Turbulence (WX+T)
+  14. Windshear (PWS)
+  15. Attenuation, ground clutter, terrain
+  16. Placing weather on the map
+  17. Fake plane and other simulator (UDP)
+  18. The FlightGear live panel
+  19. What is REAL and what is a MODEL
+  20. Limits (what it cannot do)
+  21. How to run it (step by step)
+  22. Problems and fixes
+  23. Every file and what it does
+  24. Helper tools (test and debug scripts)
+  25. Ideas for later
+  26. Other explanation files
+  27. Score (69 / 100) and the 4 missing features: WITHOUT vs WITH them
+
+
+==============================================================================
+1. WHAT THIS APP IS
+==============================================================================
+  - An aircraft WEATHER RADAR (Boeing / Airbus ND style) written in Python.
+  - It shows storms ahead of the plane in green / yellow / red / magenta.
+  - It can run:
+       * on its own (built-in weather and a simulated plane),
+       * with FlightGear (FlightGear's plane and weather),
+       * with ANOTHER simulator (its plane, FlightGear's weather).
+  - It copies real radar behaviour: beam width, tilt, gain, attenuation,
+    ground clutter, turbulence (Doppler), predictive windshear, hail icon.
+  - Start:  pip install -r requirements.txt   then   python main.py
+
+
+==============================================================================
+2. THE BIG PICTURE
+==============================================================================
+
+   PLANE POSITION                      WEATHER
+   --------------                      -------
+   Simulated plane (in app)   --+  +-- Built-in storms (app)
+   FlightGear plane (telnet)  --+  +-- FlightGear Detailed Weather
+   Other simulator (UDP)      --+  |     volumes  -> how strong
+   Fake plane (test, UDP)     --+  |     clouds   -> where, shape, top, storm
+                                |  |     stations -> freezing level per area
+                                |  +-- FlightGear Basic Weather (layers/METAR)
+                                v  v
+                          +----------------+
+                          |   THIS APP     |
+                          |  radar beam    |  <- tilt, gain, range, mode
+                          |  physics       |
+                          +----------------+
+                                  |
+              +-------------------+--------------------+
+              v                   v                    v
+        RADAR SCREEN         WINDSHEAR (PWS)       WEATHER MAP
+        colours, hail,       amber / red alerts    place storms,
+        turbulence           + voice               see the plane
+
+
+==============================================================================
+3. HOW A WEATHER RADAR WORKS (BASICS)
+==============================================================================
+  - The antenna in the nose sends a pulse; rain drops send a little back.
+       time to come back   -> how FAR
+       antenna direction   -> which WAY
+       echo strength (dBZ) -> how HEAVY
+  - Colours:
+       green    20-30 dBZ   light rain
+       yellow   30-40 dBZ   moderate
+       red      40-50 dBZ   heavy (avoid)
+       magenta  50+   dBZ   very heavy, storm core (avoid)
+  - The radar sees WATER DROPS only. Not clouds, not wind, not clear-air
+    turbulence. Dry snow and ice give only a weak echo.
+  - The beam is a cone 3.5 deg wide: at 40 NM it is about 15,000 ft tall.
+    It only sees weather at the heights it passes -> TILT matters.
+  - It looks 180 deg ahead (+/- 90 deg). Nothing behind or far beside.
+  - Doppler radars also measure how fast the drops move -> turbulence and
+    windshear.
+
+
+==============================================================================
+4. THE RADAR SCREEN - WHAT YOU SEE
+==============================================================================
+  - Track-up ND: compass arc, range rings, heading box (TRK ... MAG).
+  - White triangle = where the nose points (heading).
+  - Magenta notched box = selected heading (heading bug).
+  - GS / TAS and wind arrow (top left).
+  - Top right: weather source (e.g. "FG VOLUMES 8 SHAPED") and range.
+    Amber source text = only approximate.
+  - Left: radar mode and tilt (e.g. "WX+T", "-1.5A"; A = AUTO tilt).
+  - Echo colours (green / yellow / red / magenta).
+  - Magenta in WX+T = turbulence.
+  - Red/black striped wedge + amber lines = WINDSHEAR area.
+  - Text WINDSHEAR: amber = caution, red = warning.
+  - White upside-down triangle with dots = HAIL icon.
+  - "GND CLUTTER" = ground echo paints more than 1 % of the screen.
+  - STBY / TEST / "WXR TEST" labels in those modes.
+  - Sweep: the picture is painted by a moving sweep line, like a real one.
+  - Optional cyan/white snow colours (training checkbox, off by default).
+
+
+==============================================================================
+5. THE RADAR CONTROLS ("Weather radar panel")
+==============================================================================
+  - WXR       EFIS switch: off removes the weather from the ND.
+  - Mode      OFF   nothing
+              STBY  on, no beam
+              TEST  colour test pattern + windshear test icon
+              WX    weather
+              WX+T  weather + turbulence (magenta) within 40 NM
+              MAP   ground mapping (cyan / yellow / magenta)
+  - Tilt      -15 .. +15 deg.  AUTO = bottom of the beam on the ground just
+              past the selected range (no clutter). Tilt down by hand ->
+              ground clutter fills the screen.
+  - Gain      CAL (calibrated) or -10 .. +10 dB by hand (VAR).
+              Turbulence is NOT changed by gain (like real Doppler).
+  - Range     10, 20, 40, 80, 160, 320 NM.
+  - [x] Simulate attenuation        heavy rain hides what is behind it
+  - [x] Windshear voice alerts      spoken PWS alerts
+  - [ ] No FlightGear volumes: draw weather from METAR / clouds (fallback)
+  - [ ] Show snow in cyan/white (training only)   real radars cannot
+  - Save radar image (PNG)
+
+
+==============================================================================
+6. THE 3 WAYS TO RUN THE APP ("Source > Mode")
+==============================================================================
+
+  Mode
+   |
+   +-- Simulated
+   |     plane: built-in ("Simulated aircraft": heading, altitude, speed-up)
+   |     weather: built-in scenarios
+   |     needs: nothing
+   |
+   +-- FlightGear
+   |     plane: FlightGear's aircraft (telnet port 5401)
+   |     weather: FlightGear (volumes, clouds, stations, or METAR)
+   |     needs: FlightGear with --telnet=5401, wxradar_export.nas
+   |
+   +-- Other simulator (UDP)
+         plane: another simulator (or the fake plane), JSON over UDP 49100
+         weather: ONLY from FlightGear (connected, --fdm=null); the app
+                  moves FlightGear's aircraft to the other plane
+         without FlightGear: radar stays empty
+
+
+==============================================================================
+7. WHERE THE WEATHER COMES FROM (ALL SOURCES)
+==============================================================================
+  The app picks the source by itself (label top right of the screen):
+
+  Label            Source                                     Exact?
+  ---------------  -----------------------------------------  ----------
+  SIM WX           built-in storms (Simulated mode)           made up
+  FG VOLUMES n     FlightGear Detailed Weather volumes        REAL place
+     ... SHAPED    same, Realistic shape                      REAL + model
+  FG LAYERS        Basic Weather, Manual Configuration         real layers
+                   (cloud layers, rain/snow sliders, turb table)
+  CLOUD ECHO n     Detailed Weather, no volumes: echo on       approximate
+                   each cloud position
+  FG METAR         no volumes, no clouds: storms from METAR    approximate
+  METAR TEMP       Detailed Weather still building             approximate
+  NO VOLUMES /     fallback off, or other-sim mode without     nothing
+  DETAILED WX OFF  Detailed Weather
+  NO FLIGHTGEAR    other-sim mode, FlightGear not connected   nothing
+  WX RESET         FlightGear was reset, reading again        wait
+
+  Built-in scenarios (Simulated mode):
+     Clear, Scattered Cb, Squall line, Embedded cell in rain,
+     Isolated hook cell, Finger cell, U-shape cell, Scalloped cell
+     (the last four = Airbus warning shapes: violent storms).
+  Built-in weather controls: Precipitation (rain/snow/mixed), Storm
+  strength, Coverage, Wind from / speed, Freezing level, Regenerate storms,
+  "Add microburst ahead", "Send weather to FlightGear" (as a METAR).
+
+
+==============================================================================
+8. FLIGHTGEAR: WHAT IT GIVES, HOW WE TAKE IT
+==============================================================================
+  FlightGear's Detailed Weather makes weather in TILES (about 40 x 40 km)
+  around the plane. New tiles ahead, old ones behind deleted. So weather
+  exists only about 30-40 NM around you.
+
+  In every tile:
+   |
+   +-- CLOUDS      what you SEE          -> where, shape, top, storm?
+   +-- VOLUMES     what the plane FEELS  -> rain, snow, turbulence strength
+   +-- STATIONS    temperature           -> freezing level per area
+   +-- wind, thunderstorm list, lightning (partly used / not used)
+
+  How the app takes data:
+   +-- GETTING (telnet, fg_link.py): simple properties - position, heading,
+   |   speeds, wind, temperature, METAR, temperature table, lightning...
+   +-- SCRIPT (wxradar_export.nas, runs INSIDE FlightGear): data hidden in
+   |   Nasal code, copied to /wxradar/...
+   |      volumes   every 2 s   /wxradar/volumes
+   |      clouds    every 5 s   /wxradar/clouds/data   (rain clouds, ~65 NM)
+   |      stations  every 5 s   /wxradar/stations/data
+   |      terrain   grid 90x90 NM, height + water   /wxradar/terrain/data
+   |      placing / removing storms   /wxradar/place
+   +-- UDP (generic protocol): the app MOVES FlightGear's plane
+       (wxradar-in.xml, other-simulator mode)
+
+  wxradar_export.nas must be in  ...\fgdata_2024_1\Nasal\  (loads at start).
+
+
+==============================================================================
+9. ECHO SHAPE: REAL DATA / REALISTIC / CLOUDS
+==============================================================================
+
+  Echo shape
+   |
+   +-- Real data   FlightGear volumes exactly: one flat colour per volume,
+   |               turbulence from its value. Circles and boxes.
+   |
+   +-- Realistic   same volumes drawn like a real storm:
+          |        strong core, weaker ragged edges, weaker near the top,
+          |        Doppler-like turbulence patches, F-factor windshear
+          |
+          +-- [x] Shape from FlightGear's clouds   (default ON)
+                 For each rain/snow volume:
+                  +-- no clouds inside -> volume's own Realistic shape
+                  +-- clouds inside
+                        +-- echo WHERE the clouds are, strongest where packed
+                        +-- echo top = highest cloud (not the anvil)
+                        +-- strength = the volume's value
+                        +-- Cumulonimbus / Cb_box / Congestus inside?
+                              YES -> STORM: hail check, microburst,
+                                     turbulence; core = most packed spot
+                              NO  -> normal rain
+
+  Why clouds: volumes are boxes ("rain somewhere here"); clouds show the
+  real place and shape, so the radar matches the window.
+
+
+==============================================================================
+10. FREEZING LEVEL
+==============================================================================
+  Near the plane (as before):
+    1st  FlightGear's temperature table (where it crosses 0 degC)
+    2nd  temperature at the plane, 2 degC colder per 1000 ft
+    Simulated mode: the "Freezing level" box.
+
+  [x] Freezing level per area (default ON, needs weather stations):
+    each area = near-plane value
+              + (its station temperature - station temperature here) x 505 ft
+    warmer area -> higher; colder area -> lower.
+
+  Used for: ice (-7 dB above it), bright band (+5 dB in the 1000 ft below),
+  snow colours (training), hail rule, storm top fade.
+
+
+==============================================================================
+11. SNOW
+==============================================================================
+  - Real radars cannot tell snow from rain: snow is just WEAKER (mostly
+    green). The app does the same by default.
+  - Ice above the freezing level: echo 7 dB weaker.
+  - Melting snow just below it (bright band): echo 5 dB stronger.
+  - [ ] "Show snow in cyan/white (training only)" - OFF by default.
+        ON: green/yellow above the freezing level -> cyan; in the 1000 ft
+        below -> white. Red/magenta stay.
+  - Snow is NOT only from storms: any rain cloud when it is cold.
+
+
+==============================================================================
+12. HAIL
+==============================================================================
+  - No radar sees hail. It is guessed: 45 dBZ reaching 4,600 ft or more
+    ABOVE the freezing level = likely hail (Waldvogel 1979, NEXRAD rule).
+  - Icon: white upside-down triangle with dots, on the storm.
+  - With cloud shapes: only STORMS (Cb), real cloud top, storm's own
+    freezing level, icon on the core.
+  - Needs the freezing level (no freezing level -> no hail icon).
+
+
+==============================================================================
+13. TURBULENCE (WX+T)
+==============================================================================
+  - Real radar: Doppler sees drops moving in many directions (spectrum
+    width 5 m/s and up). Needs rain. Only within 40 NM. Not changed by gain.
+  - App: magenta where turbulence is above 0.5 (= 5 m/s), within 40 NM,
+    where there is an echo.
+  - VALUE always comes from the FlightGear volume.
+  - Realistic: patches, strongest on the core walls, rougher higher up,
+    changes from scan to scan.
+  - With cloud shapes (current rule): shown only in STORM volumes (Cb).
+    A non-storm volume with turbulence shows NO magenta.
+    NOTE: this may hide turbulence the plane really feels; a change was
+    proposed (show it in all rain, storms just stronger on the walls) -
+    not decided yet.
+
+
+==============================================================================
+14. WINDSHEAR (PWS - PREDICTIVE WINDSHEAR)
+==============================================================================
+  - Real radar: Doppler measures drops coming toward then going away
+    (microburst) -> F-factor. F 0.13 or more over about 1 km = danger.
+  - App: FlightGear has NO microburst wind, so the app BUILDS one under
+    heavy rain (downdraft + outflow), then detects it like a real PWS.
+  - Rules (like Boeing):
+       above 2,300 ft AGL   off
+       1,200 - 2,300 ft     icon only
+       below 1,200 ft       icon + text + voice
+       looks 5 NM ahead, +/- 40 deg
+       AMBER "WINDSHEAR"  "Monitor radar display"   (farther / to the side)
+       RED   "WINDSHEAR"  within 3 NM and +/- 25 deg
+             descending: "Go around, windshear ahead"
+             climbing:   "Windshear ahead, windshear ahead"
+             (repeats every 8 s)
+  - Which rain makes a microburst:
+       Real data:   45 dBZ or more + turbulence 0.6 or more at 500 ft
+       Realistic:   rain above 0.5 (stronger with more rain + turbulence)
+       + clouds:    only STORMS (Cb), under the core, 0.5-1.1 NM radius
+  - Test: Simulated mode, altitude below 1,200 ft, "Add microburst ahead".
+  - The plane in FlightGear does NOT really sink (FlightGear has no
+    microburst) - only the radar warns.
+
+
+==============================================================================
+15. ATTENUATION, GROUND CLUTTER, TERRAIN
+==============================================================================
+  - Attenuation: heavy rain absorbs the beam; what is behind looks weaker
+    or black ("radar shadow"). Checkbox "Simulate attenuation".
+  - Ground clutter: when the beam hits the ground. Stronger the lower the
+    beam. "GND CLUTTER" warning. AUTO tilt avoids it.
+  - Real terrain (from wxradar_export.nas): 90 x 90 NM grid of height and
+    land/water. Hills and mountains bright, water almost nothing
+    (coastlines show), mountains hide what is behind them. Unknown areas:
+    made-up ground texture.
+  - MAP mode: ground mapping, brighter ground, cyan/yellow/magenta.
+  - Earth curve is included (the ground drops away from a level beam).
+
+
+==============================================================================
+16. PLACING WEATHER ON THE MAP
+==============================================================================
+  - "Show weather map" opens a north-up map beside the radar (plane in the
+    middle, trail of the last 10 minutes, radar coverage in green,
+    mouse wheel = range 5-320 NM).
+  - Map click: Off / Add storm / Remove storm.
+  - Types:  Rain shower      2 km, rain 40 %,  turb 0 %,  base 3000 ft
+            Cumulonimbus     3 km, rain 80 %,  turb 60 %, base 2500 ft
+            Thunderstorm     5 km, rain 100 %, turb 80 %, base 2500 ft
+    (size, rain, turbulence, base can be changed; rain label shows colour:
+     below 32 % green, 32-57 yellow, 57-82 red, above 82 magenta)
+  - Simulated: app storm, drifts with the wind.
+  - FlightGear: FlightGear builds REAL clouds + volume (needs Detailed
+    Weather + wxradar_export.nas). Answer "OK ..." or "FAILED ...".
+  - Other sim: only with FlightGear connected.
+  - "Hold aircraft still": stops the plane (pauses FlightGear).
+  - Remove one / "Clear placed weather" (also in FlightGear).
+  - FlightGear deletes a placed storm with its tile when you fly away; the
+    map follows.
+  - A placed "Rain shower" counts as a STORM with cloud shapes (FlightGear
+    builds it from a Cb_box cloud); at 40 % rain it is too weak for hail or
+    a microburst.
+  - Tested: test_place_map.py ALL OK (echo appears at the right bearing and
+    distance; nothing behind; add/remove works).
+
+
+==============================================================================
+17. FAKE PLANE AND OTHER SIMULATOR (UDP)
+==============================================================================
+  - Purpose: use this radar with ANOTHER simulator. That simulator gives the
+    plane's position; FlightGear gives the weather.
+  - Fake plane = stands in for that simulator while testing.
+       Left panel "Fake plane (test)": speed, turn (deg/s), heading,
+       altitude, lat/lon, Start / Stop, Move plane.
+       Sends 10 times a second: {"lat","lon","hdg","alt","gs","trk"}
+       to UDP port 49100. Mode switches to "Other simulator (UDP)".
+  - Also as its own program: python fake_plane.py --gs 250 --turn 1
+  - With FlightGear connected (--fdm=null): the app moves FlightGear's
+    plane to the fake plane 30 times a second (UDP via wxradar-in.xml,
+    or telnet as fallback); FlightGear builds weather around it.
+  - FlightGear frames/s shown: green 25+, amber 15-25, red below 15.
+
+
+==============================================================================
+18. THE FLIGHTGEAR LIVE PANEL ("FlightGear weather (live)")
+==============================================================================
+  At your plane: weather mode, paused, time speed-up, heading, freezing
+  level, real terrain %, METAR, number of volumes, visibility, rain, snow,
+  turbulence, wind, temperature / dew point, humidity, pressure.
+
+  Detailed Weather: weather type, station, thunderstorms, cloud layers,
+  storm clouds read, their altitude,
+     Cloud pieces (export)  e.g. "850, shaping 6 volume(s), 3 storm(s) (Cb)"
+     Weather stations       e.g. "9, sea-level 18 to 24 C, freezing ..."
+  area visibility / rain / snow / turbulence, thermal lift, weather zones,
+  inside rain / snow / turbulence / low-visibility / lift zone, last
+  lightning.
+
+  "none (needs the new wxradar_export.nas)" = the script is not running.
+
+
+==============================================================================
+19. WHAT IS REAL AND WHAT IS A MODEL
+==============================================================================
+  REAL (from FlightGear data or real radar rules):
+    - where the weather is, its strength, its clouds, tops, storm type
+    - beam width, tilt, earth curve, ranges, 180 deg coverage
+    - attenuation, ground clutter, real terrain and water
+    - freezing level (table / stations)
+    - hail rule, PWS limits and alerts (2300 / 1200 ft, 5 NM, amber / red)
+  MODEL (FlightGear does not have this data):
+    - microburst wind (the app builds it)
+    - red core inside a storm (FlightGear gives one value per volume)
+    - turbulence patches (FlightGear gives one value)
+    - rain value 0..1 -> dBZ (FlightGear rain is not dBZ)
+    - built-in storms in Simulated mode
+
+
+==============================================================================
+20. LIMITS (WHAT IT CANNOT DO)
+==============================================================================
+  - FlightGear weather only about 30-40 NM around the plane: long ranges
+    (160 / 320 NM) mostly empty; storms "pop up" when a tile is made.
+  - No real wind inside storms in FlightGear -> windshear is a model, and
+    the plane does not really sink.
+  - No pitch / roll yet -> no beam stabilisation in turns.
+  - Only the last lightning strike is used, no lightning icon.
+  - Basic Weather has no volumes or clouds -> approximate echoes.
+  - Cloud shapes and stations: tested with made-up data, not yet in real
+    FlightGear.
+
+
+==============================================================================
+21. HOW TO RUN IT (STEP BY STEP)
+==============================================================================
+  A) Alone (no FlightGear)
+     1. python main.py
+     2. Mode: Simulated. Choose a scenario. Radar mode WX.
+
+  B) With FlightGear
+     1. FlightGear launcher > Additional Settings:
+           --telnet=5401
+           --disable-real-weather-fetch
+     2. wxradar_export.nas in fgdata\Nasal (already copied there).
+     3. Fly! Then Environment > Weather > Detailed Weather > Thunderstorms
+        > Apply. Wait about 30 s.
+     4. python main.py  ->  Mode FlightGear  ->  Connect to FlightGear
+     5. Echo shape: Realistic. Both boxes ticked.
+     6. Panel: check "Cloud pieces (export)" and "Weather stations".
+
+  C) Other simulator / fake plane
+     1. FlightGear with the full option list (section 17 / README):
+        --fdm=null, --generic=socket,in,30,127.0.0.1,5510,udp,wxradar-in ...
+     2. wxradar-in.xml in fgdata\Protocol.
+     3. Connect to FlightGear, then Start fake plane (or the other sim).
+
+
+==============================================================================
+22. PROBLEMS AND FIXES
+==============================================================================
+  Radar empty
+    - mode WX? WXR on? range 10-40 NM? tilt AUTO?
+    - FlightGear: Detailed Weather on? Source label says what is used.
+  "none (needs the new wxradar_export.nas)"
+    - restart FlightGear; script in fgdata\Nasal; Detailed Weather on.
+  Clouds come but 0 storms
+    - the weather has no thunderstorms (try "Thunderstorms").
+  No hail icon
+    - no freezing level, storm too weak / low, or not a storm.
+  No windshear
+    - above 2,300 ft AGL? heavy storm within 5 NM ahead?
+  Storm placed but not shown / FAILED
+    - Detailed Weather off, or script not loaded, or beam over the top.
+  UDP "waiting for data"
+    - fake plane not started, wrong port, firewall.
+  FlightGear jerks in UDP mode
+    - --fdm=null missing; wxradar-in.xml missing (telnet fallback).
+  Old script back
+    - fgdata\Nasal\wxradar_export.nas.bak_20261124 -> rename to .nas
+
+
+==============================================================================
+23. EVERY FILE AND WHAT IT DOES
+==============================================================================
+  main.py              the window: all panels, modes, loop, PWS alerts,
+                       placing, fake plane, FlightGear panel
+  display.py           draws the ND radar screen (arc, rings, sweep, icons)
+  radar.py             the radar: beam, tilt, dBZ, colours, attenuation,
+                       clutter, turbulence, hail_cells, windshear (PWS)
+  weather.py           built-in storms (WeatherModel, scenarios), METAR
+                       reading, FlightGearWeather (volumes, Realistic shape,
+                       cloud shapes, storms, freezing per area, microburst)
+  basic_weather.py     Basic Weather layers + freezing_level_ft()
+  terrain.py           real terrain grid from FlightGear
+  fg_link.py           telnet link to FlightGear: reads everything, sends
+                       METAR, places / removes storms
+  fg_drive.py          moves FlightGear's plane (UDP / telnet)
+  udp_link.py          receives another simulator's position (UDP JSON)
+  fake_plane.py        the fake plane (also stand-alone)
+  place_map.py         the weather placement map
+  wxradar_export.nas   runs INSIDE FlightGear: exports volumes, clouds,
+                       stations, terrain; places / removes storms
+  wxradar-in.xml       FlightGear protocol file for moving its plane by UDP
+  requirements.txt     numpy, PySide6
+
+
+==============================================================================
+24. HELPER TOOLS (TEST AND DEBUG)
+==============================================================================
+  test_place_map.py         checks placing + radar without any simulator
+  test_scenarios.py         tries every Detailed Weather scenario in
+                            FlightGear (--httpd=8081), writes
+                            scenario_test.txt (CHANGES FlightGear's weather)
+  test_fg_export.py         loads wxradar_export.nas into a running
+                            FlightGear without restarting
+  volume_logger.py          logs volumes on every change ->
+                            volume_log.txt, volume_current.txt
+  beam_probe.py             follows one beam and prints the weather every NM
+                            (python beam_probe.py --map / --watch)
+  dump_detailed_weather.py  dumps everything Detailed Weather has
+  + wxradar_dump.nas        -> detailed_weather_dump.txt (read only)
+  extract.py                turns the radar PDF (wr.pdf) into pdf_content.md
+
+
+==============================================================================
+25. IDEAS FOR LATER
+==============================================================================
+  Most useful:
+    - test cloud shapes + stations in real FlightGear
+    - decide the turbulence rule (section 13)
+    - pitch + roll -> beam stabilisation in turns
+    - attenuation alert (mark where the radar is blind: PAC / REACT)
+    - storm top labels (e.g. +380)
+  Also:
+    - airspeed, gear, flaps -> right PWS message, reactive windshear
+      ("WINDSHEAR WINDSHEAR WINDSHEAR")
+    - all lightning strikes -> lightning icon
+    - placed microburst (wet / dry) and making the plane feel it
+    - vertical profile (side view of storms)
+    - wind per tile / by height -> correct drift
+
+
+==============================================================================
+26. OTHER EXPLANATION FILES
+==============================================================================
+  docs\00_START_HERE_overview.txt          basics, turbulence, gain
+  docs\01_hail.txt                         hail
+  docs\02_snow.txt                         snow and freezing level
+  docs\03_windshear.txt                    PWS, microbursts
+  docs\04_attenuation.txt                  heavy rain hiding what is behind
+  docs\05_auto_tilt_and_scan.txt           AUTO tilt, antenna sweep
+  docs\06_tilt.txt                         tilt, beam width, ground clutter
+  docs\07_clouds_and_freezing_level.txt    clouds vs volumes, snow vs hail
+  docs\08_before_and_after_changes.txt     what changed (clouds, stations)
+  docs\09_placing_weather_and_fake_plane.txt   placing + fake plane
+  docs\10_COMPLETE_APP_GUIDE.txt           this file
+  RADAR_GUIDE.txt                          what to add next, FlightGear data
+  README.md                                short technical summary
+
+
+==============================================================================
+27. SCORE (69 / 100) AND THE 4 MISSING FEATURES: WITHOUT vs WITH
+==============================================================================
+Compared with a modern airliner radar (Collins WXR-2100 / Honeywell
+RDR-4000 on a 737 / A320). A judgement, not a measurement.
+
+  Part                                          Score
+  --------------------------------------------  --------
+  Screen and controls                           17 / 20
+  Beam physics (tilt, ground, terrain)          13 / 15
+  Echo realism (shape, colours, tops)           10 / 15
+  Turbulence, windshear, hail                   17.5 / 25
+  Snow, freezing level, attenuation             7.5 / 10
+  Weather range (FlightGear limit, ~40 NM)      2 / 5
+  Modern extras (vertical view, lightning...)   2 / 10
+  --------------------------------------------  --------
+  TOTAL                                         69 / 100
+
+  With the 4 features below: about 84 / 100.
+  About 85 is the most FlightGear allows (it has no real storm winds, no
+  weather 300 NM away, no storm life cycle).
+
+
+------------------------------------------------------------------------------
+27.1  PITCH AND ROLL STABILISATION                          (+2 points)
+------------------------------------------------------------------------------
+WHAT IT IS
+  A real radar antenna is held level by the aircraft's attitude (from the
+  IRS). When the plane banks or pitches, the antenna moves the other way,
+  so the beam stays where the pilot set the tilt - measured from the
+  HORIZON, not from the nose.
+
+WITHOUT IT (now) - what is wrong
+  The app thinks the plane is ALWAYS level.
+
+    Plane banks 25 deg left in a turn:
+
+    REAL plane, no stabilisation      YOUR APP (now)
+          sky                               beam level everywhere
+     \     |     /                          -> picture looks the same
+      \    |    /   left wing down:            as in level flight
+   ground  |  sky   left side of beam
+   (clutter)        hits the ground,
+                    right side looks
+                    over the storms
+
+  - In a turn the app shows a perfect picture, but a real radar WITH
+    stabilisation also does (so normal flying looks right).
+  - BUT: in a climb (nose 10 deg up) the beam of a real radar is still
+    level (stabilised). In the app the tilt is also from level - fine.
+  - What is MISSING: the pilot cannot train the "stabilisation failed"
+    case, and the app ignores how the plane's attitude really moves the
+    antenna limits (a real antenna can only move about +/- 30-40 deg; in
+    steep bank or pitch the stabilisation runs out and the picture goes
+    wrong - clutter on one side).
+  - The app also does not know the real pitch, so AUTO tilt and the
+    picture during a steep climb / descent are slightly idealised.
+
+WITH IT - what would be right
+  - Read /orientation/pitch-deg and /orientation/roll-deg from FlightGear
+    (fast, by UDP or telnet).
+  - STAB ON (normal): beam held level, limited by the antenna's real
+    movement range -> in very steep bank / pitch one side shows clutter,
+    like a real radar.
+  - STAB OFF (failure training): beam fixed to the nose -> in a turn the
+    low wing side fills with ground clutter, the high side looks over the
+    storms. Pilots learn to recognise this failure.
+
+    TREE
+    Plane attitude (pitch, roll from FlightGear)
+       |
+       +-- STAB ON  -> beam = tilt from the horizon
+       |                 +-- small bank / pitch -> picture normal
+       |                 +-- very steep         -> antenna limit reached,
+       |                                           clutter on one side
+       +-- STAB OFF -> beam = tilt from the nose
+                         +-- bank left  -> clutter on the left
+                         +-- pitch up   -> beam over the weather
+
+
+------------------------------------------------------------------------------
+27.2  ATTENUATION ALERT (Collins "PAC", Honeywell "REACT")   (+1.5 points)
+------------------------------------------------------------------------------
+WHAT IT IS
+  Heavy rain absorbs the beam. Behind a strong storm the radar is BLIND:
+  it shows black or green where there may be another big storm.
+  Real radars MARK where they are blind:
+    Collins:   yellow arc on the outer edge of the screen ("PAC alert")
+    Honeywell: cyan area behind the storm ("REACT")
+
+WITHOUT IT (now) - what is wrong
+  The app DOES simulate the loss (checkbox "Simulate attenuation"), but it
+  does not tell the pilot.
+
+    Radar now:                       Danger:
+                                     behind the red cell there is a
+       [   black   ]  <- looks       SECOND storm, but it looks black
+         [ RED ]         clear!      -> the pilot thinks it is clear
+           ^                         -> flies into the "radar shadow"
+          plane
+
+  - Black behind a storm looks like CLEAR SKY. It is not.
+  - Airbus training says: never fly into a shadow behind a storm.
+
+WITH IT - what would be right
+  - The app already knows how much signal is lost on every beam
+    (radar.py, the attenuation part). When the loss is big (e.g. more than
+    about 20 dB before the end of the range), mark it.
+
+    Radar with alert:
+       ~~~~~~~~~~~~~  <- yellow arc on the edge (Collins style)
+       [ blind area ] <- or cyan area (Honeywell style)
+         [ RED ]
+           ^
+          plane
+
+  - The pilot sees "I cannot see behind this storm" and does not plan a
+    route through the shadow.
+  - Easy to add: the data is already computed.
+
+    TREE
+    Each beam
+       +-- add up the loss through the rain
+       +-- loss small -> normal picture
+       +-- loss big   -> mark the far part: yellow arc / cyan area
+                         ("radar blind here")
+
+
+------------------------------------------------------------------------------
+27.3  STORM TOP LABELS AND LIGHTNING ICON                   (+3 points)
+------------------------------------------------------------------------------
+STORM TOP LABELS - WHAT IT IS
+  Modern radars (Collins MultiScan, Boeing 787) write a small number on
+  each big storm: its top height, e.g. "+380" = top 38,000 ft
+  (or relative: "+120" = 12,000 ft above you).
+
+WITHOUT IT (now) - what is wrong
+  - The pilot sees a red cell but not how TALL it is.
+  - Cannot judge: can I climb over it? (Rule: keep at least 5,000 ft
+    above a big storm top - often impossible.)
+  - To find the top he must tilt up and down by hand and work it out.
+
+WITH IT - what would be right
+  - The app now KNOWS each storm's top (highest cloud, from the cloud
+    shapes). Just draw it:
+
+         [ RED ] +380        <- top 38,000 ft
+           [ YEL ] +180
+             ^
+            plane at FL250
+
+  - Pilot sees at once: the 38,000 ft storm cannot be overflown; the
+    18,000 ft one is below him.
+  - Easy to add: the data is already there (cloud tops).
+
+LIGHTNING ICON - WHAT IT IS
+  Honeywell IntuVue draws a lightning symbol on cells that are likely to
+  have lightning.
+
+WITHOUT IT (now) - what is wrong
+  - The app reads only FlightGear's LAST lightning strike and uses it to
+    make the nearest cloud a red storm core. Nothing is DRAWN.
+  - Lightning is a sign of a strong, active storm (updraft, hail,
+    turbulence). The pilot gets no hint.
+
+WITH IT - what would be right
+  - Export ALL strikes from FlightGear (script), count recent strikes per
+    storm, draw a lightning symbol on active storms.
+
+         [ RED ] (lightning)   <- active storm: more dangerous
+           [ RED ]             <- no strikes
+
+    TREE
+    Each storm (Cb)
+       +-- top from its clouds   -> label "+380"
+       +-- strikes in the last minutes?
+              +-- yes -> lightning icon
+              +-- no  -> no icon
+
+
+------------------------------------------------------------------------------
+27.4  VERTICAL (SIDE) VIEW / VERTICAL PROFILE                (+4 points)
+------------------------------------------------------------------------------
+WHAT IT IS
+  Airbus A350/A380 ("VD"), Boeing 787, Honeywell IntuVue: a second small
+  picture showing the weather FROM THE SIDE along your track (or any
+  chosen line): ground, storm base, storm TOP, freezing level, and your
+  plane's height line.
+
+WITHOUT IT (now) - what is wrong
+  The normal radar shows weather from ABOVE only, at the heights the beam
+  happens to pass. The pilot must guess the height of everything:
+
+    Radar from above:  [ RED ]  ahead
+                        ^
+                       plane
+    Question: will I go OVER it, UNDER it, or THROUGH it?
+    -> unknown. Pilot must tilt up / down many times and do sums.
+
+  Danger: the beam can go OVER a storm (too high tilt) or the storm can
+  be BELOW you and grow up into your path.
+
+WITH IT - what would be right
+
+    SIDE VIEW along the track:
+
+    40,000 ft |            ___
+              |           |###|  <- storm top 38,000 ft
+    FL250 ----|---plane---|###|------------  <- your height line
+              |           |###|
+    freezing  |- - - - - -|###|- - - - - -  <- freezing level (dashed)
+              |      [##] |###|
+     ground   |______[##]_|###|____________
+              0 NM       20 NM          40 NM
+
+  - Pilot sees at once: the storm at 20 NM goes from the ground to
+    38,000 ft -> must go AROUND, cannot climb over.
+  - The small cell at 12 NM is below the freezing level and below the
+    plane -> no danger at FL250.
+  - The app already has what it needs: volume base and top, cloud tops,
+    freezing level per area, the beam model.
+
+    TREE
+    Side view along the track
+       +-- for every NM ahead and every 1,000 ft of height:
+       |      what echo would the radar see there?
+       +-- draw: ground, echoes (same colours), freezing level line,
+       |         your height line
+       +-- pilot decides: over / under / around
+
+
+------------------------------------------------------------------------------
+27.5  SUMMARY - WITHOUT vs WITH
+------------------------------------------------------------------------------
+  Feature               WITHOUT (now) - wrong          WITH - right
+  --------------------  -----------------------------  -----------------------
+  Pitch/roll stab.      plane always level; no         beam held level like a
+                        failure training; no antenna   real antenna; STAB OFF
+                        limit in steep bank            failure shows clutter
+  Attenuation alert     black behind a storm looks     yellow arc / cyan area:
+                        like clear sky (dangerous)     "radar blind here"
+  Storm top labels      storm height unknown; must     "+380" on the storm:
+                        tilt and calculate             over or around at once
+  Lightning icon        lightning used but not shown   symbol on active storms
+  Vertical view         only seen from above; over /   side picture: tops,
+                        under / through unknown        base, freezing, your
+                                                       height
+
+  Order to build (easiest and most useful first):
+    1. Attenuation alert     (data already computed)
+    2. Storm top labels      (data already there from clouds)
+    3. Pitch / roll stab.    (2 new FlightGear values)
+    4. Lightning icon        (script change: all strikes)
+    5. Vertical view         (biggest job, biggest gain)
+
+  Score: 69 -> about 84 / 100 with all of them.
+
+
+
+
+Simple rule
+Rain value → whether it shows, and the colour
+Clouds packed → where the strong part is
+Turbulence value → magenta or not
+Cb cloud → storm (hail and windshear possible)
