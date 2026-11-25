@@ -95,8 +95,8 @@ SUMMARY TABLE
                                   ~35 max); wet snow below freezing level
   Windshear      Mostly           Landing warning 1.5 NM; alerts off near
                                   ground; not every storm is a microburst
-  Attenuation    Yes, simple      Too gentle in very heavy rain; no
-                                  "can't see behind" warning on screen
+  Attenuation    Yes (now)        Real X-band loss + yellow arc (25 Nov);
+                                  still no wet radome
   AUTO tilt      Partly           No pitch/roll; no terrain database;
                                   one beam (real ones use 2 or full 3D)
   Manual tilt    Yes              Pitch/roll stabilisation

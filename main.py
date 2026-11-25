@@ -1007,6 +1007,26 @@ class MainWindow(QMainWindow):
 
         self.atten = QCheckBox("Simulate attenuation")
         self.atten.setChecked(True)
+        self.atten.setToolTip(
+            "Heavy rain eats the beam (real X-band loss: about 5 dB per NM in "
+            "50 dBZ rain), so storms behind storms look weaker or black.")
+        # Off = older radar: no compensation, no warning. On = newer radar
+        # (Collins PAC / Honeywell REACT): adds back up to 20 dB, yellow arc
+        # on the outer ring where it still cannot see.
+        self.pac = QCheckBox("Blind-area warning (yellow arc, newer radars)")
+        self.pac.setChecked(False)
+        self.pac.setToolTip(
+            "Newer radars (Collins PAC alert) add back up to 20 dB of the power "
+            "lost in heavy rain. Where even that is not enough, they cannot see "
+            "behind the storm and show a yellow arc on the outer range ring in "
+            "that direction. Off = older radar: no compensation, no warning.")
+
+        def _atten_changed(_on=None):
+            self.pac.setEnabled(self.atten.isChecked())
+            self.scanner.pac_mask[:] = False
+            self.full_refresh()
+        self.atten.toggled.connect(_atten_changed)
+        self.pac.toggled.connect(_atten_changed)
         self.voice = QCheckBox("Windshear voice alerts")
         self.voice.setChecked(True)
         self.voice.setToolTip("Spoken PWS alerts: 'WINDSHEAR AHEAD', "
@@ -1039,6 +1059,7 @@ class MainWindow(QMainWindow):
         save.clicked.connect(self.save_image)
         v.addWidget(self.snow_colors)
         v.addWidget(self.atten)
+        v.addWidget(self.pac)
         v.addWidget(self.fallback_wx)
         v.addWidget(save)
         return box
@@ -1394,6 +1415,7 @@ class MainWindow(QMainWindow):
             terrain=self.terrain if connected else None,
             rays=rays,
             snow_colors="freezing" if self.snow_colors.isChecked() else "off",
+            pac=self.atten.isChecked() and self.pac.isChecked(),
         )
 
     def _update_from_fg(self, follow_weather=True):
@@ -1568,6 +1590,7 @@ class MainWindow(QMainWindow):
             self.weather.cells = []
             self.weather.scenario = ""
         self.scanner.ground_mask[:] = False
+        self.scanner.pac_mask[:] = False
         self.display.refresh_all(0)
         self._notify("FlightGear was reset: radar cleared, weather read again", 6.0)
 

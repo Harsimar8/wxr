@@ -1,0 +1,84 @@
+WINDSHEAR
+
+
+
+Windshear = the wind changes suddenly, in speed or direction, over a short distance.
+
+
+
+Normal flight:         wind 20 kt ─────────────────── wind 20 kt   (calm, no problem)
+Windshear:             headwind 30 kt ──┐
+                                        └── tailwind 30 kt          (60 kt change in 1-2 NM!)
+
+
+
+A plane flies on its airspeed (the air moving over the wings).
+
+Headwind suddenly gets stronger → airspeed goes up → the plane climbs. That's OK.
+Tailwind suddenly → airspeed goes down → the wings lose lift → the plane sinks. That's DANGEROUS.
+
+
+
+High up, that's just a bump. Near the ground (takeoff and landing), the plane is slow and low, and there's no height to recover. That's why windshear crashes happen (Delta 191, Dallas 1985)
+
+
+
+                    WINDSHEAR causes
+                          │
+   ┌──────────────┬───────┴──────┬──────────────┬───────────────┐
+MICROBURST    GUST FRONT     WEATHER FRONT   MOUNTAINS      SEA BREEZE /
+(most deadly) (storm's cold  (cold/warm      (wind over      LOW-LEVEL JET
+              air spreading) front passing)  hills)
+   │              │               │              │               │
+ has rain     some rain /     often no rain   no rain         no rain
+ = radar      dust            = radar          = radar          = radar
+ CAN see it   = partly        CAN'T see       CAN'T see        CAN'T see
+
+
+  Step 1: STORM GROWS          Step 2: RAIN GETS HEAVY        Step 3: AIR CRASHES DOWN
+                                                              
+      ▲ warm air goes up          ☁☁☁☁☁☁☁☁                     ☁☁☁☁☁☁☁☁
+      ▲  (updraft)                ☁ rain + hail ☁                 ↓ ↓ ↓ ↓
+      ▲                           ☁  get heavy  ☁                 ↓ ↓ ↓ ↓  cold, heavy,
+   ☁☁☁☁☁                          rain drags air                ↓ ↓ ↓ ↓  wet air falls
+                                  down + rain                    ↓ ↓ ↓ ↓  (downdraft)
+                                  evaporates → air             ══════════  ground
+                                  gets COLD and HEAVY
+
+ Step 4: HITS THE GROUND AND SPREADS OUT (like water from a tap hitting a sink)
+
+                    ↓ ↓ ↓ ↓
+           ←←←←←←←← ↓ ↓ ↓ ↓ →→→→→→→→
+       ══════════════════════════════════  ground
+           outflow    downdraft    outflow
+           ←  under 4 km (2 NM) across  →
+           lasts only 5-15 minutes
+
+
+
+
+HOW REAL AIRCRAFT DETECTS IT 
+
+                         Windshear detection
+                                 │
+             ┌───────────────────┴────────────────────┐
+        PREDICTIVE (PWS)                          REACTIVE
+        = weather radar                           = flight computer
+        sees it AHEAD (before you enter)          feels it when you're IN it
+             │                                         │
+   Doppler: measures drop speed               measures airspeed loss, sinking
+   drops coming TOWARDS on one side           → "WINDSHEAR WINDSHEAR WINDSHEAR"
+   drops going AWAY on the other side         → red WINDSHEAR on PFD
+             │                                → pilot: full power, pitch up
+   calculates F-FACTOR (how fast you'd
+   lose energy). 0.13 or more = danger
+             │
+   only below 2300 ft, 5 NM ahead
+   amber: "Monitor radar display"
+   red:   "Go around, windshear ahead"
+          "Windshear ahead" (takeoff)
+
+
+          
+
+

@@ -27,6 +27,17 @@ TURB_MAX_RANGE_NM = 40.0  # Doppler turbulence detection limit
 # thunderstorms carry 0.6, medium 0.8, big 1.0: all of them shake the
 # aircraft, so all of them show.
 TURB_SHOW = 0.5
+# Rain attenuation, X-band (~9.3 GHz, what aircraft radars use). Rain rate
+# from the echo (Marshall-Palmer Z = 200 R^1.6, R in mm/h), then the one-way
+# loss k = A x R^B dB/km (ITU-R P.838, ~10 GHz). The beam goes through the
+# rain twice (out and back). About: 40 dBZ 0.8 dB/NM, 50 dBZ 5 dB/NM,
+# 55 dBZ 13 dB/NM (two-way).
+ATTEN_A, ATTEN_B = 0.0101, 1.276
+RAIN_RATE_MAX = 200.0     # mm/h, cap for the strongest cores
+KM_PER_NM = 1.852
+# Newer radars (Collins PAC, Honeywell REACT) add back the lost power up to a
+# limit. Past it they cannot see: a yellow arc on the outer ring shows where.
+PAC_COMP_DB = 20.0
 TILT_LIMIT_DEG = 15.0
 BEAM_WIDTH_DEG = 3.5      # half-power beam width of the antenna
 FT_PER_NM = 6076.1
@@ -51,6 +62,12 @@ def dbz_to_z(dbz, valid):
 
 def z_to_dbz(z):
     return 10.0 * np.log10(np.maximum(z, 1e-6))
+
+
+def rain_loss_db_per_nm(z_rain):
+    """Two-way X-band rain attenuation (dB per NM) for linear reflectivity Z."""
+    rate = np.minimum((np.maximum(z_rain, 0.0) / 200.0) ** (1.0 / 1.6), RAIN_RATE_MAX)
+    return 2.0 * ATTEN_A * rate ** ATTEN_B * KM_PER_NM
 
 
 def beam_height_ft(alt_ft, tilt_deg, range_nm):
@@ -248,6 +265,8 @@ class RadarScanner:
         self.terrain = ValueNoise(seed + 11)
         # Every shown bin that is ground echo, not weather (True = clutter).
         self.ground_mask = np.zeros((n_rays, n_bins), dtype=bool)
+        # Rays where the radar is blind behind heavy rain (PAC alert arc).
+        self.pac_mask = np.zeros(n_rays, dtype=bool)
 
     def ground_share(self):
         """Part of the screen (0..1) painted by ground clutter."""
@@ -263,8 +282,13 @@ class RadarScanner:
     def scan(self, weather, ax, ay, heading, range_nm, alt_ft=25000.0,
              ground_ft=0.0, tilt_deg=0.0, gain_db=0.0, mode="WX",
              attenuation=True, freezing_ft=None, terrain=None, rays=None,
-             snow_colors="off"):
+             snow_colors="off", pac=False):
         """Scan the whole arc. Returns uint8 levels, shape (n_rays, n_bins).
+
+        attenuation: heavy rain weakens everything behind it (real X-band loss).
+        pac: newer radar (Collins PAC / Honeywell REACT style): it adds back up
+        to PAC_COMP_DB of the loss, and marks the rays where it cannot (blind)
+        in pac_mask, for the yellow arc. Off = older radar, no compensation.
 
         snow_colors: "off" = real radar (rain and snow by strength only),
         "data" = cyan/white where the weather data says snow,
@@ -276,6 +300,7 @@ class RadarScanner:
         """
         rays = slice(None) if rays is None else rays    # only these rays (sweep)
         i0, i1, _ = rays.indices(self.n_rays)
+        self.pac_mask[i0:i1] = False
         if mode == "TEST":
             self.ground_mask[i0:i1] = False
             return self.test_pattern()[i0:i1]
@@ -392,9 +417,17 @@ class RadarScanner:
 
         if attenuation:
             # Heavy rain absorbs the beam, so anything behind it looks weaker.
+            # Real X-band loss: light rain almost nothing, very heavy rain a lot
+            # (50 dBZ about 5 dB per NM), added up from the aircraft outwards.
             dr = range_nm / self.n_bins
-            loss_db = np.maximum(0.0, z_to_dbz(z_rain) - 30.0) * 0.05 * dr
+            loss_db = rain_loss_db_per_nm(z_rain) * dr
             path_db = np.cumsum(loss_db, axis=1) - loss_db
+            if pac:
+                # Newer radar: adds back what it lost, up to a limit. Past the
+                # limit it is blind there: yellow arc on that bearing.
+                blind = path_db > PAC_COMP_DB
+                self.pac_mask[i0:i1] = blind[keep].any(axis=1)
+                path_db = np.maximum(0.0, path_db - PAC_COMP_DB)
             factor = 10.0 ** (-path_db / 10.0)
             z_rain, z_snow, z_ground = z_rain * factor, z_snow * factor, z_ground * factor
 

@@ -33,45 +33,83 @@ Airbus note says: never fly into a shadow behind a storm.
     it is NOT clear.
 
 
-3. HOW OUR APP DOES IT
+3. HOW OUR APP DOES IT   (changed 25 Nov 2026: real X-band loss + yellow arc)
 ----------------------
-Code: radar.py, scan(), the "if attenuation:" part.
-Switch: "Simulate attenuation" checkbox (on by default).
+Code: radar.py, scan(), the "if attenuation:" part, and
+      rain_loss_db_per_nm(). Yellow arc: display.py, _draw_pac().
+Switches (under the knobs):
+  "Simulate attenuation"                          on by default
+  "Blind-area warning (yellow arc, newer radars)" off by default
+      off = OLDER radar: full loss, nothing added back, no warning
+      on  = NEWER radar (Collins PAC style): adds back up to 20 dB,
+            yellow arc where it still cannot see
 
-  - Along each beam, going outwards, every piece of rain stronger than
-    30 dBZ takes power away:
-        loss (dB per NM) = (dBZ - 30) x 0.05
-  - The loss adds up. Everything behind (rain, snow, ground) gets weaker.
+  For every radar line, going out from the plane, step by step:
 
-Example:
-  A 50 dBZ storm core, 5 NM thick:
-    loss = (50 - 30) x 0.05 = 1 dB per NM, x 5 NM = 5 dB.
-  A 45 dBZ storm behind it shows as 40 dBZ: red instead of red/yellow edge.
-  With a real X-band radar the loss would probably be bigger (several dB
-  per NM), so the storm behind could look yellow or green.
+  plane --> step --> step --> step --> ...
+              |
+              +-- rain here?  echo (dBZ) -> rain rate (mm/h)
+              |                (Marshall-Palmer: Z = 200 x R^1.6)
+              +-- loss here = real X-band loss, out AND back
+              |                (ITU: 0.0101 x R^1.276 dB/km, x2, per NM)
+              +-- add it to the total lost so far on this line
+              |
+              +-- OLDER radar:  everything behind is weaker by the total
+              +-- NEWER radar:  total minus 20 dB (added back)
+                                total above 20 dB?  -> BLIND on this line
+                                                    -> YELLOW ARC on the
+                                                       outer ring there
+
+  Loss per NM (two-way):
+      dBZ    colour     NOW (real)    BEFORE (old formula)
+      30     green/yel    0.14           0
+      40     red          0.85           0.5
+      45     red          2.1            0.75
+      50     magenta      5.3            1.0     <- 5x stronger now
+      55     magenta     13              1.25    <- 10x stronger now
+
+  Where storm 2 appears: ALWAYS at its real distance (the radar measures
+  distance by time; attenuation only changes the COLOUR, not the place).
+
+Example (tested): two storms one behind the other, each 0.8 rain (red),
+storm 1 at 30 NM, storm 2 at 45 NM:
+
+      no attenuation    storm 1 RED,  storm 2 RED
+      BEFORE (old app)  storm 1 RED,  storm 2 RED       (too easy)
+      OLDER radar now   storm 1 RED,  storm 2 GREEN     (hidden behind!)
+      NEWER radar now   storm 1 RED,  storm 2 RED + yellow arc at its back
+
+  Very heavy storm 1 (magenta, 55 dBZ, 4 NM):
+      storm 2 straight behind -> BLACK in both, newer radar draws the arc.
+      storm 2 seen past the SIDE of storm 1 -> normal colour.
+      So: TURN or TILT to look past storm 1, like a real pilot.
+
+  No voice, no text - only the yellow arc (like the real Collins radar).
 
 
 4. IS IT CORRECT?
 -----------------
   Heavy rain weakens what is behind     Yes
-  Light rain (below 30 dBZ) no loss     Yes, about right
+  Light rain almost no loss             Yes
   Ground behind storms also weaker      Yes
-  How much loss in very heavy rain      Too gentle (probably 2-4 times
-                                        less than real X-band)
+  How much loss in very heavy rain      Yes now (real X-band formula,
+                                        out and back)
   Snow and ice almost no loss           Yes (only rain counts)
+  Storm 2 shown at its real distance    Yes
+  Older radar: no compensation          Yes (checkbox off)
+  Newer radar: compensation + arc       Yes, simple (fixed 20 dB limit)
   Wet radome                            No
-  Warning "can't see behind"            No
+  Honeywell REACT cyan area             No (only the Collins-style arc)
 
 
 5. WHAT COULD BE IMPROVED
 -------------------------
-  A1. Use a real X-band attenuation formula (stronger loss in very heavy
-      rain, counted both ways).
-  A2. Draw a "can't see further" mark (like Collins PAC yellow arc or
-      Honeywell REACT) where the beam has lost too much power.
+  A1. DONE - real X-band attenuation, counted both ways.
+  A2. DONE - yellow arc where the radar is blind (checkbox).
   A3. Wet radome option: everything a few dB weaker when flying in rain.
   A4. Teaching button: show the same picture with and without attenuation
       side by side, to see what was hidden.
+  A5. Honeywell style: paint the blind area cyan (REACT) instead of an arc.
 
 
 6. WHAT MORE FLIGHTGEAR CAN GIVE

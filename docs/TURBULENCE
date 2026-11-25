@@ -1,0 +1,182 @@
+TURBULENCE
+
+
+
+Turbulence = the air is churning. Small pieces of air move up, down and
+sideways in different directions, very close to each other.
+
+
+
+ Smooth air:      → → → → → → → → → →        (all air moves the same way)
+ Turbulence:      ↗ ↓ ← ↑ ↘ → ↙ ↑ ↓ ↗        (every piece moves differently)
+
+
+
+The plane is shaken: bumps, drinks fly, people not in their seats get hurt.
+Strong storm turbulence can damage the aircraft.
+
+
+
+
+WHERE TURBULENCE COMES FROM
+
+                    TURBULENCE causes
+                          │
+   ┌──────────────┬───────┴──────┬──────────────┬────────────────┐
+ STORMS        RAIN SHOWERS    MOUNTAINS      JET STREAM       WAKE of
+ (Cb)          (Cumulus)       (wind over     (clear air       other planes
+ (worst)                       hills)         turbulence, CAT)
+   │              │               │               │                │
+ has rain      has rain        no rain         NO rain          no rain
+ = radar       = radar         = radar         = radar          = radar
+ CAN see it    CAN see it      CAN'T see       CAN'T see        CAN'T see
+
+
+  ❗ The radar sees RAIN DROPS. No drops = no turbulence on the radar.
+     Clear air turbulence (CAT) is INVISIBLE to every weather radar.
+
+
+
+
+HOW A REAL RADAR DETECTS IT (Doppler)
+
+  The radar measures how fast each group of drops moves TOWARDS or AWAY.
+
+
+   Smooth rain:                              Turbulent rain:
+
+   drops in one spot all move               drops in one spot move at
+   at about the SAME speed                  very DIFFERENT speeds
+
+     • → 10 m/s                                • → 18 m/s
+     • → 11 m/s                                • ← 4 m/s
+     • → 10 m/s                                • → 12 m/s
+     • → 9 m/s                                 • ← 2 m/s
+
+   spread (spectrum width) ≈ 1 m/s          spread ≈ 8 m/s
+   → NOT turbulence                         → TURBULENCE (5 m/s or more)
+
+
+                      Real radar turbulence (WX+T / TURB)
+                                     │
+        ├─ spread of drop speeds 5 m/s or more?  ── no ──► not shown
+        │        yes
+        ├─ within 40 NM?                          ── no ──► not shown
+        │        yes                                     (too far, not exact)
+        ├─ enough rain to measure?                ── no ──► not shown
+        │        yes
+        ▼
+   MAGENTA on the screen (on top of green/yellow/red)
+
+   - The GAIN knob does NOT change it (it measures speed, not strength).
+   - Turbulence can be magenta even inside GREEN rain.
+   - Some newer radars also scale the alert to the aircraft (weight,
+     height) to say how hard it will actually shake.
+
+
+
+
+WHAT MY APP DOES
+
+ FlightGear
+        │  gives: weather volumes with "turbulence" 0..1
+        │         (small storm 0.6, medium 0.8, big 1.0)
+        │  the SAME value really shakes the FlightGear aircraft
+        ▼
+ YOUR APP (weather.py)
+        │
+        ├─ Turn it into drop speed spread:  turbulence 1.0 = 10 m/s
+        │       0.6 → 6 m/s     0.8 → 8 m/s     1.0 → 10 m/s
+        │
+        ├─ FLAT mode: the whole volume has that value
+        │
+        ├─ REALISTIC mode (more like a real storm):
+        │     only REAL STORMS (Cumulonimbus clouds), not wide gentle rain ✅
+        │     strongest where the clouds are packed (the middle)
+        │     extra on the WALLS of strong cores
+        │     rougher higher up in the storm
+        │     patchy, and changes a little every sweep (air churns) ✅
+        │     never stronger than FlightGear's own value ✅
+        ▼
+ YOUR APP (radar.py scan) = copy of a real Doppler radar
+        │
+        ├─ mode WX+T?                              ── no ──► not shown
+        ├─ spread 5 m/s or more?                  ── no ──► not shown
+        ├─ within 40 NM? ✅                        ── no ──► not shown
+        ├─ rain/snow echo there (at CAL gain)? ✅  ── no ──► not shown
+        ▼
+   MAGENTA      (gain knob does not change it ✅)
+
+
+  Simulated mode: storms in the scenarios carry their own turbulence value.
+
+  Turbulence is also used by the WINDSHEAR simple rule
+  (heavy rain + turbulence 0.6 or more, low down).
+
+
+
+
+EXAMPLES
+
+
+  FlightGear medium storm, turbulence 0.8, 25 NM ahead, mode WX+T
+
+     FLAT mode:       8 m/s everywhere in the volume  ≥ 5  → whole storm MAGENTA
+
+     REALISTIC mode:
+         ┌──────────────────────────────┐
+         │  edge of storm               │    edge:  8 x 0.35 = 2.8 m/s → not shown
+         │     ┌────────────────┐       │
+         │     │   packed core  │       │    core:  up to 8 m/s       → MAGENTA ✅
+         │     │    MAGENTA     │       │
+         │     └────────────────┘       │    low down (x 0.7): 5.6    → MAGENTA ✅
+         └──────────────────────────────┘
+       → magenta only in the core, like a real storm ✅
+
+
+  Same storm but 60 NM ahead           → NOT shown (beyond 40 NM)
+  Same storm, gain turned to -10       → magenta stays ✅
+  Mode WX (not WX+T)                   → NOT shown
+  Thin rain volume, turbulence 0.3     → 3 m/s < 5 → NOT shown
+
+
+
+
+IS IT CORRECT?
+
+  Doppler spread 5 m/s threshold               ✅
+  Only within 40 NM                            ✅
+  Needs rain (no drops = nothing)              ✅
+  Gain does not change it                      ✅
+  Magenta, only in WX+T                        ✅
+  Strongest in storm core, patchy (Realistic)  ✅
+  Clear air turbulence invisible               ✅ (no rain = not shown)
+  Turbulence scaled to the aircraft            ❌ (some newer radars do)
+  Real drop speeds                             ⚠️ made from FlightGear's 0..1
+                                                  value, not real Doppler
+
+
+
+
+WHAT COULD BE IMPROVED
+
+  T1. Scale to the aircraft: a heavy plane high up shakes less than a light
+      one low down (newer radars do this).
+  T2. Show the spread in m/s on hover / in a debug line, to learn the numbers.
+  T3. Lesson: put clear air turbulence (no rain) in Simulated mode → the radar
+      shows NOTHING, but FlightGear's aircraft still shakes.
+
+
+
+
+WHAT MORE FLIGHTGEAR CAN GIVE
+
+ FlightGear gives:                          App can use it for:
+ ─────────────────                          ─────────────────────────────
+ Volume "turbulence" 0..1          ──────►  how rough (already used) ✅
+ Cloud types (Cumulonimbus)        ──────►  only real storms (used) ✅
+ Aloft / boundary turbulence table ──────►  turbulence at each height
+ Aircraft weight, altitude, speed  ──────►  T1 (how hard it will shake)
+ /environment/turbulence at plane  ──────►  check: radar said magenta,
+                                            did the plane really shake?
+ Drop speeds                       ──────►  ❌ FlightGear has none

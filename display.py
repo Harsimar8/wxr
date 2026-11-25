@@ -209,6 +209,7 @@ class RadarDisplay(QWidget):
         p.drawText(QRectF(W - 210, 26, 200, 20), Qt.AlignRight, f"RNG {rng} NM")
 
         self._draw_pws(p)
+        self._draw_pac(p)
         self._draw_hail(p)
         self._draw_wxr_status(p)
         self._draw_gnd_label(p)
@@ -273,6 +274,33 @@ class RadarDisplay(QWidget):
             p.setPen(RED if pws["level"] == "warning" else AMBER)
             p.drawText(QRectF(W - 270, CY - R * 0.56, 200, 26),
                        Qt.AlignRight | Qt.AlignVCenter, "WINDSHEAR")
+
+    def _draw_pac(self, p):
+        """Blind-area warning (Collins PAC alert): a yellow arc on the outer
+        range ring, on every bearing where heavy rain has eaten so much of the
+        beam that the radar cannot see what is behind it."""
+        if not self.transmitting() or self.info["mode"] not in ("WX", "WX+T"):
+            return
+        mask = self.scanner.pac_mask
+        if not mask.any():
+            return
+        step = 2 * self.half / self.nr
+        radius = R - 6
+        p.setPen(QPen(QColor(255, 230, 0), 6, Qt.SolidLine, Qt.FlatCap))
+        p.setBrush(Qt.NoBrush)
+        i = 0
+        while i < self.nr:
+            if not mask[i]:
+                i += 1
+                continue
+            j = i
+            while j + 1 < self.nr and mask[j + 1]:
+                j += 1
+            a0 = -self.half + i * step          # degrees right of up
+            a1 = -self.half + (j + 1) * step
+            # Qt angles: 0 = 3 o'clock, counter-clockwise, in 1/16 degree.
+            p.drawArc(self._arc_rect(radius), int((90 - a1) * 16), int((a1 - a0) * 16))
+            i = j + 1
 
     def _draw_hail(self, p):
         """Hail icon on each storm likely to hold hail: a white upside-down

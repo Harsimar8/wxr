@@ -53,6 +53,15 @@ weaker, so mostly green).
   Red and magenta stay (a strong echo up there is hail or a violent core).
   Needs the freezing level; without it nothing changes.
 
+- **Simulate attenuation** (on): heavy rain eats the beam with the real
+  X-band loss, out and back (about 0.85 dB per NM at 40 dBZ, 5 at 50 dBZ, 13 at
+  55 dBZ), so storms behind storms look weaker or black. They always stay at
+  their real distance; only the colour changes.
+- **Blind-area warning (yellow arc, newer radars)** (off = older radar): the
+  radar adds back up to 20 dB of that loss (like Collins PAC), and where even
+  that is not enough draws a yellow arc on the outer range ring in that
+  direction. No voice or text. Turn or tilt to look past the storm.
+
 The beam is 3.5
 degrees wide and only sees weather at the heights it passes through, so a
 storm can be missed if the beam goes over its top. Simulated storms get a
