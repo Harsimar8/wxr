@@ -49,6 +49,37 @@ _OFFSETS = np.linspace(-1.5, 1.5, 7) * BEAM_WIDTH_DEG / 2
 _WEIGHTS = np.exp(-math.log(2) * (_OFFSETS / (BEAM_WIDTH_DEG / 2)) ** 2)
 _WEIGHTS /= _WEIGHTS.sum()
 
+# Radar equation for rain (a target that fills the beam): received power
+# P ~ Z / r^2. The receiver has a noise floor, so the weakest Z it can still
+# see grows by 20 log10(r): 6 dB more every time the range doubles. The radar
+# shows calibrated dBZ (range-normalised) as long as the echo is above the
+# noise; below it the echo is simply lost. With -24 dBZ at 1 NM: 20 dBZ (green)
+# is seen out to about 160 NM, 30 dBZ to about 500 NM.
+SENS_DBZ_1NM = -24.0
+# The beam is 3.5 deg wide sideways too: it smears every echo over that angle
+# (at 80 NM about 5 NM), so far storms look wider and softer, and a small
+# strong core far away is averaged with the clear air beside it.
+AZ_SIGMA_DEG = BEAM_WIDTH_DEG / 2.3548     # Gaussian sigma of the beam
+
+
+def min_detectable_dbz(range_nm):
+    """Weakest echo (dBZ) the receiver can see at this range."""
+    return SENS_DBZ_1NM + 20.0 * np.log10(np.maximum(range_nm, 0.1))
+
+
+def _azimuth_smear(a, sigma_rays):
+    """Average a (rays x bins) array over the antenna's sideways pattern."""
+    k = int(math.ceil(3 * sigma_rays))
+    if k < 1:
+        return a
+    w = np.exp(-0.5 * (np.arange(-k, k + 1) / sigma_rays) ** 2)
+    w /= w.sum()
+    p = np.pad(a, ((k, k), (0, 0)), mode="edge")
+    out = np.zeros_like(a, dtype=float)
+    for j, wj in enumerate(w):
+        out += wj * p[j:j + a.shape[0]]
+    return out
+
 
 def to_dbz(refl):
     """Weather model strength (about 1.0 = storm core) to dBZ."""
@@ -307,8 +338,11 @@ class RadarScanner:
         if mode not in SCANNING_MODES:                  # OFF / STBY: no beam
             self.ground_mask[i0:i1] = False
             return np.zeros((i1 - i0, self.n_bins), dtype=np.uint8)
-        # Scan one extra ray each side so the smoothing has neighbours.
-        e0, e1 = max(0, i0 - 1), min(self.n_rays, i1 + 1)
+        # Scan extra rays each side so the beam smearing and the smoothing
+        # have neighbours.
+        sigma_rays = AZ_SIGMA_DEG / (2 * self.half_angle / self.n_rays)
+        margin = int(math.ceil(3 * sigma_rays)) + 1
+        e0, e1 = max(0, i0 - margin), min(self.n_rays, i1 + margin)
         keep = slice(i0 - e0, i0 - e0 + (i1 - i0))
 
         bearing = np.radians(heading + self.rel_angles[e0:e1])[:, None]
@@ -430,6 +464,21 @@ class RadarScanner:
                 path_db = np.maximum(0.0, path_db - PAC_COMP_DB)
             factor = 10.0 ** (-path_db / 10.0)
             z_rain, z_snow, z_ground = z_rain * factor, z_snow * factor, z_ground * factor
+
+        # Sideways beam width: each ray receives the power of its neighbours,
+        # weighted by the antenna pattern.
+        z_rain = _azimuth_smear(z_rain, sigma_rays)
+        z_snow = _azimuth_smear(z_snow, sigma_rays)
+        z_ground = _azimuth_smear(z_ground, sigma_rays)
+        turb = _azimuth_smear(turb, sigma_rays)
+
+        # Receiver noise (radar equation): an echo weaker than the noise at
+        # its range is not seen at all, whatever the gain.
+        z_noise = 10.0 ** (min_detectable_dbz(r) / 10.0)
+        lost = (z_rain + z_snow + z_ground) < z_noise
+        z_rain = np.where(lost, 0.0, z_rain)
+        z_snow = np.where(lost, 0.0, z_snow)
+        z_ground = np.where(lost, 0.0, z_ground)
 
         # Where the ground echo is stronger than the weather: clutter.
         ground_wins = z_ground > (z_rain + z_snow)

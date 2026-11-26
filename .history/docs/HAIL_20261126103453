@@ -1,0 +1,203 @@
+HAIL
+
+
+
+Hail = balls of ICE that grow inside a thunderstorm.
+
+
+
+ Normal rain:     drop forms ──► falls ──► rain on the ground
+ Hail:            drop forms ──► carried UP ──► freezes ──► falls ──► carried UP again
+                                 (many times, it grows like an onion)
+
+
+
+Hail can crack the windshield, dent the radome (nose), and hurt the engines.
+It can fall OUT OF THE SIDE or the TOP (anvil) of a storm, into clear air,
+a few NM away from the red area.
+
+
+
+
+HOW HAIL IS MADE
+
+  Step 1: STRONG UPDRAFT          Step 2: GOES ABOVE FREEZING      Step 3: TOO HEAVY, FALLS
+
+      ▲ ▲ ▲  air goes up               ❄ ice ❄   ← cold (below 0 °C)       ●  ●  hail
+      ▲ ▲ ▲  VERY fast                 ▲ ▲ ▲                                ↓  ↓
+      ▲ ▲ ▲  (30+ m/s)          ─ ─ ─ ─ ─ ─ ─ ─ ─  freezing level            ↓  ↓
+      ▲ ▲ ▲  carries drops             ▲ ▲ ▲                                ↓  ↓
+   ☁☁☁☁☁☁☁                          drops                             ══════════  ground
+
+
+  The STRONGER the updraft  →  the HIGHER the water goes above the freezing level
+                            →  the BIGGER the hail.
+
+  So: strong echo FAR ABOVE the freezing level = strong updraft = HAIL.
+
+
+
+
+HOW A REAL RADAR DETECTS IT
+
+  A real aircraft radar CANNOT SEE HAIL. It only sees how strong the echo is.
+
+        Wet hail (low, warm, water skin)        Dry hail (high, cold)
+        ────────────────────────────────        ──────────────────────────
+        VERY strong echo: red / magenta         WEAK echo: green or nothing
+        → looks dangerous ✅                     → looks SAFE but is NOT ❗
+
+
+                         Hail detection
+                               │
+             ┌─────────────────┴──────────────────┐
+        PILOT (older radars)                 HAIL ICON (newer radars)
+        looks for clues:                     Honeywell IntuVue, Collins MultiScan
+             │                                     │
+   - hook, finger, U-shape, scalloped     radar scans the storm at many heights
+     edges (Airbus briefing note)         → strong echo high above the
+   - red/magenta HIGH above freezing        freezing level?
+     (tilt up, echo still there)          → draws a hail icon on the storm
+   - storm grows fast                        │
+                                          exact rule = company SECRET
+                                          (not published)
+
+
+  Ground radars (NEXRAD, USA) use a PUBLISHED rule (Waldvogel 1979):
+
+     "45 dBZ echo reaching 4,600 ft (1.4 km) or MORE above the
+      freezing level → good chance of hail"
+
+        ─────────── 45 dBZ top ───────────┐
+                                          │ 4,600 ft or more?  → HAIL
+        ─ ─ ─ ─ ─ freezing level ─ ─ ─ ─ ─┘
+
+
+
+
+WHAT MY APP DOES
+
+ FlightGear (has NO hail at all)
+        │  gives: rain volumes (strength, base, top) + clouds + temperature
+        ▼
+ YOUR APP (radar.py hail_cells)
+        │
+        ├─ Freezing level known?                         ── no ──► no hail icon
+        │        yes
+        ├─ Is it a RAIN volume?                          ── no ──► no hail icon
+        │        yes
+        ├─ With cloud shapes: is it a REAL STORM?        ── no ──► no hail icon
+        │  (has a Cumulonimbus cloud)
+        │        yes → storm top = highest cloud, icon goes on the storm CORE
+        │
+        ├─ Freezing level of THIS storm's area (weather stations) ✅
+        │
+        ├─ Go UP through the storm, 100 ft at a time:
+        │     strength = rain  (rain 0.8 = 49 dBZ, rain 1.0 = 57 dBZ)
+        │     above freezing level: ice → 7 dB weaker ✅
+        │     Realistic mode: top of the storm fades ✅
+        │
+        ├─ Find the HIGHEST point that is still 45 dBZ or more
+        │
+        ├─ That point 4,600 ft or more above freezing?   ── no ──► no hail icon
+        │        yes
+        ▼
+   HAIL ICON (white upside-down triangle with dots) on the storm
+   shown in WX and WX+T, when the radar is sending, inside the screen
+
+
+
+
+EXAMPLES (freezing level 12,000 ft, Realistic mode)
+
+
+  Storm A: rain 0.8 (49 dBZ), top 35,000 ft
+
+     35,000 ┐
+            │   above freezing: 49 - 7 = 42 dBZ   (below 45)
+     12,000 ┼ ─ ─ freezing ─ ─      highest 45 dBZ point = 12,000 ft
+            │   49 dBZ              12,000 - 12,000 = 0 ft above freezing
+          0 ┘                       → NO HAIL ❌
+
+
+  Storm B: rain 0.9 (53 dBZ), top 35,000 ft
+
+     35,000 ┐
+     ~17,500│ ← 45 dBZ reaches up to here (53 - 7 = 46, fading with height)
+     12,000 ┼ ─ ─ freezing ─ ─     about 5,500 ft above freezing  ≥ 4,600
+          0 ┘                       → HAIL ✅
+
+
+  Storm C: SAME rain 0.9, but top only 20,000 ft
+
+     20,000 ┐
+     ~13,900│ ← 45 dBZ only up to here (fades faster in a short storm)
+     12,000 ┼ ─ ─ freezing ─ ─     about 1,900 ft above freezing  < 4,600
+          0 ┘                       → NO HAIL ❌
+
+  Same rain, different height → different answer. TALL strong storms = hail.
+
+
+  Storm D: rain 1.0 (57 dBZ), top 35,000 ft
+
+     above freezing: 57 - 7 = 50 dBZ → 45 dBZ reaches about 24,800 ft
+     about 12,800 ft above freezing → HAIL ✅
+
+
+
+
+IS IT CORRECT?
+
+  Hail guessed from height of strong echo       ✅ (same idea as real hail icons,
+                                                    published NEXRAD rule)
+  Dry hail high up looks weak                   ✅ (ice -7 dB)
+  Only real storms (Cumulonimbus)               ✅
+  Freezing level per area                       ✅
+  Wet hail extra strong (low down)              ❌ hail is treated like rain
+  Hail icon on Simulated storms                 ❌ FlightGear volumes only
+  METAR "GR" (hail reported)                    ⚠️ counted as rain
+  Hail falling out of the anvil (clear air)     ❌ real radars don't show it either
+
+
+
+
+WHAT COULD BE IMPROVED
+
+  H1. Hail icon on SIMULATED storms too (hook, finger, U-shape, scalloped
+      cells are the hail shapes of the Airbus note).
+  H2. METAR says GR / GS → make the low storm core a bit stronger (wet hail).
+  H3. Teaching extra: mark a few NM downwind of a hail storm's top
+      ("hail can fall here from the anvil").
+
+
+
+
+WHAT MORE FLIGHTGEAR CAN GIVE
+
+ FlightGear gives:                          App can use it for:
+ ─────────────────                          ─────────────────────────────
+ Temperature at each height        ──────►  freezing level (already used) ✅
+ Weather station per tile          ──────►  freezing level per area (used) ✅
+ Cloud types (Cumulonimbus)        ──────►  real storm or not (used) ✅
+ Cloud tops                        ──────►  how tall the storm is (used) ✅
+ Volume "lift" (updraft)           ──────►  strong updraft = more hail chance
+ Lightning strikes                 ──────►  strong storm = more hail chance
+ METAR "GR" / "GS"                 ──────►  hail reported (but not WHERE)
+ hail itself                       ──────►  ❌ FlightGear has none
+
+
+ Echo above the freezing level:
+     ├─ app makes it 5× weaker (-7 dB), because it's ice   ✅ for both
+     │
+     ├─ still green/yellow  → snow (cyan if the training checkbox is on)
+     │
+     └─ still RED 4,600 ft+ above freezing, in a Cb storm
+                            → 🔻 HAIL ICON
+                              (red/magenta are never turned cyan, because
+                               a strong echo up there = hail, danger must show)
+
+
+
+
+
+                               

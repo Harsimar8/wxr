@@ -1,0 +1,188 @@
+BUGS RIGHT NOW (CHECKED 2026-11-26)
+===================================
+
+How this was checked:
+  - every source file through a code checker (pyflakes): no errors,
+    no unknown names, nothing unused.
+  - the app run without a screen through EVERY scenario x EVERY range
+    (10 - 320 NM) x EVERY mode (OFF, STBY, TEST, WX, WX+T, MAP), plus
+    tilt -15 / +15, gain -10 / +10, PAC, snow colours, WXR off,
+    microburst: 0 crashes. Speed: about 237 updates per second.
+  - test_place_map.py: ALL OK.
+  - the volume shapes compared with FlightGear's own code
+    (local_weather.nas): they match exactly.
+  - test_scenarios.py could NOT be run: it needs FlightGear running.
+
+Result: NO CRASHES and NO BIG BUGS. What is left are small mistakes in the
+windshear (PWS) logic and docs that are out of date.
+
+  #   Where                     How bad   What
+  --  ------------------------  --------  ---------------------------------
+  1   radar.py  F-factor        medium    uses ground speed instead of
+                                          airspeed for the down-wind part
+  2   main.py   PWS speed       medium    FlightGear speed 0 -> uses the
+                                          made-up 250 kt instead
+  3   main.py   PWS voice       small     landing / take-off guessed from
+                                          vertical speed only
+  4   main.py   PWS voice       small     alert said again if it blinks
+                                          off for a moment
+  5   main.py   PWS rules       small     no "alerts off" on the runway
+                                          (take-off roll, last 50 ft)
+  6   docs/10   score           doc       says 69 / 100 and PAC missing:
+                                          both out of date
+  7   cloud shapes + stations   risk      never tested in real FlightGear
+
+
+------------------------------------------------------------------------------
+BUG 1  F-FACTOR USES GROUND SPEED FOR BOTH PARTS                (medium)
+------------------------------------------------------------------------------
+WHERE:  radar.py, _f_factor_hazard()
+            v = max(speed_kt, 60.0) * 0.5144
+            f = gradient(tail) * v / 9.81  -  up / v
+        main.py, _update_pws() passes GROUND speed (gs_kt).
+
+WHAT IS WRONG:
+  The real formula has two parts:
+     F = (tailwind change per second) / g   -   (down wind) / AIRSPEED
+  - Part 1: how fast you fly INTO the wind change = GROUND speed.   OK
+  - Part 2: how steep the down wind pushes you = AIRSPEED (TAS).    WRONG
+  The app uses ground speed for both.
+
+EXAMPLE:
+  Approach at 140 kt airspeed with a 30 kt headwind -> ground speed 110.
+  Part 2 becomes w / 110 instead of w / 140: about 27 % too strong.
+  With a tailwind it is too weak. So the PWS alerts a bit early with a
+  headwind, a bit late with a tailwind.
+
+FIX:
+  Pass both speeds: windshear(..., gs_kt=gs, tas_kt=tas).
+      f = gradient(tail) * gs / g  -  up / tas
+  FlightGear gives tas_kt already (the ND shows it).
+
+
+------------------------------------------------------------------------------
+BUG 2  FLIGHTGEAR SPEED 0 -> PWS USES THE MADE-UP 250 KT        (medium)
+------------------------------------------------------------------------------
+WHERE:  main.py, _update_pws()
+            speed = (self.fg.state.get("gs_kt") if fg_live else None)
+                    or self.sim_gs
+
+WHAT IS WRONG:
+  "or" treats 0 as "no value". With FlightGear connected and the plane
+  standing still (gs = 0), the PWS uses sim_gs instead, which is the
+  Simulated-mode speed (250 kt at start). The F-factor part 1 grows with
+  speed, so a storm ahead of a PARKED plane can give a windshear alert
+  as if it were flying at 250 kt.
+
+FIX:
+  if fg_live: speed = fg.state.get("gs_kt", 0.0)   (0 stays 0)
+  else:       speed = self.sim_gs
+  (And bug 5: on the ground below take-off speed there should be no
+  alert at all.)
+
+
+------------------------------------------------------------------------------
+BUG 3  LANDING OR TAKE-OFF IS GUESSED FROM VERTICAL SPEED ONLY    (small)
+------------------------------------------------------------------------------
+WHERE:  main.py, _update_pws()
+            elif vs_fps < -3.0:   -> "Go around, windshear ahead"
+            else:                 -> "Windshear ahead, windshear ahead"
+
+WHAT IS WRONG:
+  Descending faster than 180 ft/min = landing, anything else = take-off.
+  On an approach with a level part (e.g. level at 1,000 ft before
+  the glide slope) the app says the TAKE-OFF message.
+  A real system uses the flight phase (gear down, flaps, airspeed,
+  radio altitude going down).
+
+FIX:
+  Read gear-down and flaps from FlightGear. Landing = gear down AND
+  (descending OR flaps in landing position). Otherwise take-off.
+
+
+------------------------------------------------------------------------------
+BUG 4  VOICE ALERT REPEATS WHEN THE ALERT BLINKS                  (small)
+------------------------------------------------------------------------------
+WHERE:  main.py, _update_pws()
+            if level not in ("warning", "caution"):
+                self.pws_said = (None, 0.0)
+
+WHAT IS WRONG:
+  The PWS is checked 4 times a second. When the plane is at the edge
+  of the alert area, the alert can go on - off - on. Every "off" clears
+  what was said, so every "on" says it again: "Monitor radar display"
+  many times in a few seconds.
+  Real systems hold an alert for a few seconds once it is given.
+
+FIX:
+  Keep the alert for at least 3-5 seconds after it was last seen
+  before clearing pws_said.
+
+
+------------------------------------------------------------------------------
+BUG 5  NO "ALERTS OFF" ON THE RUNWAY                              (small)
+------------------------------------------------------------------------------
+WHERE:  main.py, _update_pws()
+
+WHAT IS WRONG:
+  The real PWS switches alerts OFF:
+    - on take-off from 100 kt until 50 ft (too late to stop, and the
+      crew is busy),
+    - on landing below 50 ft.
+  The app alerts all the way to the ground and during the take-off run.
+  The docs already describe these rules (03_windshear.txt), but the
+  code does not do them.
+
+FIX:
+  agl < 50 ft  -> no new alert,
+  on the ground and ground speed > 100 kt -> no new alert.
+
+
+------------------------------------------------------------------------------
+BUG 6  10_COMPLETE_APP_GUIDE.txt IS OUT OF DATE                     (doc)
+------------------------------------------------------------------------------
+WHERE:  docs/10_COMPLETE_APP_GUIDE.txt, section 25 and section 27.
+
+WHAT IS WRONG:
+  - Section 27 says the score is 69 / 100 and the attenuation alert
+    (PAC / REACT yellow arc) is MISSING. But it is built: the checkbox
+    "Blind-area warning (yellow arc, newer radars)" exists and the arc
+    is drawn (display.py, _draw_pac).
+  - Section 25 "Ideas for later" also still lists the attenuation alert.
+  - The score uses a different scale from 11_RADAR_RATING_AND_PLAN.txt
+    (63 -> 66 now). Two different scores confuse the reader.
+  - Step 1 (radar equation, noise, beam smearing) is not mentioned.
+
+FIX:
+  In 10: mark PAC as done, remove it from "ideas for later", and point
+  section 27 to 11_RADAR_RATING_AND_PLAN.txt for the score.
+
+
+------------------------------------------------------------------------------
+RISK 7  CLOUD SHAPES AND WEATHER STATIONS NEVER TESTED IN FLIGHTGEAR
+------------------------------------------------------------------------------
+Not a bug found, but a place where bugs may hide. The guide itself says
+(section 20): "Cloud shapes and stations: tested with made-up data, not
+yet in real FlightGear." test_scenarios.py also could not be run here.
+Things to watch when you test in FlightGear:
+  - echoes at the right place on the clouds (not shifted),
+  - hail icon and microburst on the storm's core,
+  - freezing level per area changing smoothly between tiles,
+  - nothing slow when many clouds are loaded.
+
+
+------------------------------------------------------------------------------
+CHECKED AND NOT BUGS (so you don't look for them again)
+------------------------------------------------------------------------------
+  - Weak storms (FlightGear rain below about 0.5) show nothing in
+    Simulated mode at high altitude: the beam goes over their tops.
+    This is real (beam overshoot), not a bug. Tilt down to see them.
+  - The windshear alert can take up to 0.25 s to appear after a
+    microburst is added: it is checked 4 times a second, on purpose.
+  - Wind arrow direction on the ND: correct (points where the wind
+    blows to, turned to magnetic like the rest of the ND).
+  - Volume shapes (circle, ellipse, box, rotation): same maths as
+    FlightGear's own local_weather.nas.
+  - Yellow PAC arc: on the right bearings, cleared when turned off.
+  - Step 1 change (radar equation, beam smearing): echoes still at the
+    right place (test_place_map ALL OK), no slowdown you can see.

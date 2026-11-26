@@ -1,0 +1,464 @@
+HOW REAL IS THIS RADAR? (RATING, PHYSICS CHECK AND PLAN TO 90+)
+================================================================
+
+Score today: about 66 / 100 compared with a real airborne weather radar
+             (was 63 before step 1 below was built on 2026-11-26).
+Goal:        90+ / 100.
+
+CONTENTS
+  1. What "score" means here
+  2. Is real physics used?
+  3. Score by area
+  4. WHY ONLY 66 - where the 34 missing points are
+  5. HOW TO GET TO 90+ - step by step (what to build, where, how to test)
+  6. Order to build it in
+  7. What changed in the code for step 1
+
+
+1. WHAT "SCORE" MEANS HERE
+--------------------------
+The app is compared with a real aircraft weather radar (Collins WXR-2100,
+Honeywell RDR-4000 style). 10 areas, each worth 10 points:
+  - Does it work the way the real radar works (physics)?
+  - Does it have the features the real radar has?
+  - Does it look and behave like the real one in the cockpit?
+
+The score is an honest estimate, not a test result.
+
+
+2. IS REAL PHYSICS USED?  -> YES, FOR MOST OF THE RADAR ITSELF
+---------------------------------------------------------------
+"Real physics" = a formula from science or radar engineering, not a
+number picked because it looks right.
+
+REAL PHYSICS (formulas from science):
+
+  a) BEAM SHAPE                                          radar.py, top
+     The radar beam is a cone 3.5 deg wide. It is strongest in the
+     middle and weaker at the sides (a "Gaussian" antenna pattern).
+     The app samples the beam at 7 heights and weights them like a real
+     antenna. So when only part of the beam is in the rain, the echo is
+     weaker, as on a real radar.
+
+  b) EARTH CURVE                                         CURVE_FT_PER_NM2
+     The earth curves away under a level beam. The "4/3 earth" model
+     (the standard one) also includes the air bending the beam a little.
+     So a level beam far away is much higher above the ground.
+
+  c) RAIN ATTENUATION                                    rain_loss_db_per_nm
+     Heavy rain "eats" the beam, so storms BEHIND it look weaker.
+       - rain rate from the echo:  Z = 200 x R^1.6   (Marshall-Palmer)
+       - loss per km at X-band:    k = A x R^B       (ITU-R P.838)
+       - counted twice (out and back), added up along the beam.
+
+  d) ICE AND MELTING LAYER                               phase() in scan()
+     Ice reflects about 5x less than water (-7 dB). This is from the
+     physics of water and ice (|K|^2 = 0.93 water, 0.18 ice).
+     Just below the freezing level, wet snowflakes look like huge drops:
+     +5 dB, the "bright band".
+
+  e) TERRAIN SHADOW
+     Once the beam hits a mountain, nothing behind it can be seen.
+
+  f) HAIL RULE                                           hail_cells()
+     45 dBZ reaching 1.4 km (4,600 ft) above the freezing level = about
+     50 % chance of hail (Waldvogel 1979, also used by NEXRAD).
+
+  g) WINDSHEAR F-FACTOR                                  _f_factor_hazard()
+     F = (how fast the tailwind grows) / g  -  (down wind) / airspeed,
+     averaged over about 1 km. The real formula from NASA/FAA research.
+
+  h) PAC / REACT                                         pac=True in scan()
+     Newer radars add back the power lost in rain up to a limit (20 dB).
+     Past that limit they are blind: yellow arc on the outer ring.
+
+  i) NEW (step 1): RADAR EQUATION AND RECEIVER NOISE     min_detectable_dbz
+     The power coming back from rain gets weaker with distance:
+         received power  ~  Z / r^2
+     The receiver has noise. An echo weaker than the noise is lost.
+     So the weakest echo the radar can see grows with range:
+         weakest dBZ = -24 + 20 x log10(range in NM)
+     Every time the range doubles, it needs 6 dB more echo.
+       range    weakest echo it can see
+        20 NM    2 dBZ
+        60 NM   12 dBZ
+       120 NM   18 dBZ
+       160 NM   20 dBZ   <- light rain (green) disappears beyond here
+       300 NM   26 dBZ
+     Turning the GAIN up does NOT bring these back: they are below the
+     noise, there is nothing to amplify. Exactly like a real radar.
+
+  j) NEW (step 1): SIDEWAYS BEAM SMEARING                _azimuth_smear
+     The beam is 3.5 deg wide sideways too. Far away that is wide:
+        at 20 NM  about 1.2 NM
+        at 80 NM  about 5 NM
+        at 160 NM about 10 NM
+     Everything inside that width is averaged together. So:
+       - far storms look WIDER and SOFTER than they are,
+       - a small red core far away can look only yellow,
+       - two storms close together far away can merge into one.
+     Before, the picture stayed sharp at every range. Now it doesn't.
+
+NOT PHYSICS (numbers chosen so it looks right):
+
+  - FLIGHTGEAR RAIN -> dBZ                               to_dbz()
+    FlightGear gives rain as 0..1 with no unit. The app turns it into
+    dBZ with a straight line (rain 0.5 = 37 dBZ, rain 1.0 = 57 dBZ).
+    Real rain has a rate in mm/h. FlightGear does not give one.
+
+  - TURBULENCE
+    FlightGear gives one turbulence number per volume. The app adds
+    patches and noise. A real radar measures how much the rain drops'
+    speeds differ (Doppler "spectrum width"). The app does not have the
+    drop speeds, so it cannot measure that yet.
+
+  - GROUND CLUTTER
+    Ground echo uses fixed dB values (hills bright, water dark). In real
+    physics the echo depends on the angle the beam hits the ground: a
+    steep angle gives a strong echo, a grazing angle a weak one.
+
+  - SPECKLE (the grain in the picture)
+    Made with smoothed random noise. Real speckle comes from many drops
+    adding up in and out of step ("Rayleigh fading") and the radar
+    averaging many pulses.
+
+  - MICROBURST WIND
+    FlightGear has no wind inside storms. The app builds a microburst
+    (see the WINDSHEAR file). The F-factor formula is real, but the wind
+    it is used on is a model.
+
+
+3. SCORE BY AREA
+----------------
+  Area                     Before  Now   Can reach  What is still missing
+  -----------------------  ------  ----  ---------  ------------------------
+  Beam geometry             8.5    9.0     10.0     pitch / roll stabilisation
+  Reflectivity physics      6.0    8.0      9.5     dBZ from a real rain rate
+  Attenuation / PAC         9.0    9.0      9.5     PAC blind = below noise
+  Ground clutter / MAP      6.0    6.0      9.0     angle-dependent echo,
+                                                    Doppler clutter filter
+  Doppler turbulence        4.0    4.0      9.0     no wind field, no drop
+                                                    speeds
+  Windshear PWS             7.5    7.5      9.5     real Doppler measurement,
+                                                    flaps / speed rules,
+                                                    reactive windshear
+  Hail / threat icons       7.0    7.0      9.0     lightning icon, storm
+                                                    top labels
+  Weather input             5.0    5.0      7.0     FlightGear limits (one
+                                                    value per volume, only
+                                                    about 40 NM around)
+  Display / controls        8.0    8.0      9.5     vertical profile view,
+                                                    path weather display
+  Modern radar features     2.0    2.0      9.0     3D buffer, auto
+                                                    MultiScan
+  -----------------------  ------  ----  ---------
+  TOTAL                    ~63     ~66     ~91
+
+
+4. WHY ONLY 66 - WHERE THE 34 MISSING POINTS ARE
+------------------------------------------------
+Short answer: the parts of the radar that work from ECHO STRENGTH are
+good (attenuation, beam, hail, noise). The parts that work from SPEED
+(Doppler) and the features of modern radars are mostly missing. Those
+two alone are 15 of the missing points.
+
+Point by point (biggest losses first):
+
+  a) MODERN RADAR FEATURES: 8 points lost  (2 / 10)
+     Every new airliner radar (RDR-4000, WXR-2100 MultiScan) works like
+     this:
+       - it scans several tilts by itself, all the time,
+       - it keeps everything in a 3D "box" of the sky (volume buffer),
+       - the screen is CUT out of that box along your flight path,
+       - the pilot does not need to set the tilt at all,
+       - it has a side view (vertical profile) of the storms ahead,
+       - weather above or below your path is shown differently from
+         weather ON your path.
+     This app scans ONE tilt and draws what that tilt hits. That is how
+     radars from the 1990s worked. So almost the whole area is missing.
+
+  b) DOPPLER TURBULENCE: 6 points lost  (4 / 10)
+     A real radar sees turbulence by measuring the SPEED of the rain
+     drops (Doppler). If the drops in one spot move at very different
+     speeds (spectrum width 5 m/s or more) = turbulence = magenta.
+     This app has no drop speeds at all. It takes FlightGear's single
+     "turbulence" number and paints magenta where it is high. The
+     result looks right, but it is not measured like a real radar.
+
+  c) WEATHER INPUT: 5 points lost  (5 / 10)
+     FlightGear gives each rain volume ONE strength and ONE turbulence
+     value, no wind inside storms, and only about 40 NM around the
+     plane. The app has to invent the red core, the patches and the
+     microburst. This area can never reach 10 with FlightGear, so the
+     realistic target is 7.
+
+  d) GROUND CLUTTER / MAP: 4 points lost  (6 / 10)
+     Ground echo is made from fixed dB values. A real ground echo
+     depends on the angle the beam hits the ground (steep = strong,
+     grazing = weak), and real radars REMOVE most ground echo with a
+     Doppler filter (the ground does not move, rain does). Both missing.
+
+  e) HAIL / THREAT ICONS: 3 points lost  (7 / 10)
+     Hail icon: good. Missing: lightning icon (FlightGear gives strikes),
+     storm top labels like "+380" (tops 38,000 ft above you), and the
+     "predictive overflight" warning (a storm top under you is rising
+     into your path).
+
+  f) WINDSHEAR PWS: 2.5 points lost  (7.5 / 10)
+     The limits and the F-factor are real. But:
+       - the wind is read straight from the model, not MEASURED with
+         Doppler (no noise, no "needs enough rain" in a real way),
+       - no take-off / landing rules (alerts off on take-off from 100 kt
+         to 50 ft, off on landing below 50 ft, warning only within
+         1.5 NM on landing),
+       - no reactive windshear (the plane's own sensors: "WINDSHEAR
+         WINDSHEAR WINDSHEAR" when you are already in it).
+
+  g) DISPLAY / CONTROLS: 2 points lost  (8 / 10)
+     The ND looks right. Missing: vertical profile view, path / off-path
+     display, storm top text. (These come with a) and e).)
+
+  h) REFLECTIVITY PHYSICS: 2 points lost  (8 / 10)
+     The radar equation and noise are now real (step 1). Still missing:
+     dBZ is made from FlightGear's 0..1 rain with a straight line, not
+     from a real rain rate in mm/h. And speckle is not real Rayleigh
+     fading.
+
+  i) BEAM GEOMETRY: 1 point lost  (9 / 10)
+     No pitch / roll. A real antenna stays level in a turn. Here the
+     beam always behaves as if the wings are level.
+
+  j) ATTENUATION / PAC: 1 point lost  (9 / 10)
+     PAC "blind" is a fixed 20 dB limit. In real life it is blind where
+     the echo, after the loss, falls under the NOISE (now that the
+     noise exists, this can be done properly).
+
+
+5. HOW TO GET TO 90+ - STEP BY STEP
+-----------------------------------
+For each step: WHAT it is, HOW to build it, WHERE in the code, and HOW
+to check it works.
+
+  STEP 1  RADAR EQUATION + NOISE + BEAM SMEARING        DONE    +3
+  ------------------------------------------------------------------
+  See 2 i), 2 j) and section 7.
+
+
+  STEP 2  REAL DOPPLER (WIND FIELD + SPECTRUM WIDTH)            +7
+  ------------------------------------------------------------------
+  WHAT: give the rain drops a speed, and let the radar MEASURE it.
+
+  HOW:
+    1. Make a wind field  weather.wind(X, Y, H)  -> (east, north, up) m/s:
+         - the normal wind (FlightGear gives it, by height),
+         - the storm's own movement,
+         - the microburst outflow (already in weather.outflow()),
+         - an updraft in the core of strong storms,
+         - gusts: random swirls whose size comes from FlightGear's
+           turbulence value (turbulence 1.0 = about 8-10 m/s gusts).
+    2. In radar.scan(), for every range cell:
+         radial speed  = wind along the beam  (towards / away from us)
+         spectrum width = how much the speeds differ inside the beam
+                          (gusts + wind shear across the beam width)
+       Weight both by the echo strength, like a real radar does.
+    3. Turbulence (magenta in WX+T) = spectrum width >= 5 m/s, and only
+       where there is enough echo to measure (real rule).
+    4. Add measuring noise that grows when the echo is weak.
+  WHERE: weather.py (new wind()), radar.py scan() (WX+T part).
+  CHECK: magenta only in strong storms, never in clear air; weak rain
+         at the edge of a storm gives patchy (noisy) magenta; gain
+         does not change magenta.
+  POINTS: Doppler turbulence 4 -> 9 (+5), weather input +1, PWS +1.
+
+
+  STEP 3  3D VOLUME BUFFER + AUTO MULTISCAN                     +8
+  ------------------------------------------------------------------
+  WHAT: the radar fills a 3D box of the sky by itself and the screen is
+        cut out of that box.
+
+  HOW:
+    1. A 3D grid around the plane, e.g. 1 NM x 1 NM x 1,000 ft, up to
+       about 160 NM and 0 - 60,000 ft. Fixed to the ground (not to the
+       plane), so stored echoes stay in the right place as you fly.
+    2. Every sweep, the radar uses a different tilt (e.g. -4, -1.5, +1,
+       +4 deg, then again). Each sweep writes its echoes (dBZ, spectrum
+       width) into the cells its beam passes through.
+    3. Old values fade out after about 1 minute (storms move).
+    4. The ND picture = for each point on the screen, the strongest echo
+       in the box between your flight path height -/+ about 4,000 ft
+       (the "path" layer). No tilt knob needed: AUTO mode.
+    5. PATH / OFF-PATH: weather only above or below the path layer is
+       drawn striped or dimmer ("secondary weather", like RDR-4000).
+    6. Ground: the terrain height is known, so ground echoes can be
+       removed from the box before drawing (real MultiScan does this).
+  WHERE: new file volume_buffer.py, called from main.py each sweep;
+         display.py draws from the buffer instead of from one scan.
+  CHECK: fly towards a storm: it appears without touching the tilt; a
+         storm far below the plane is striped / dimmed, not solid;
+         climbing above a storm moves it from solid to striped.
+  POINTS: modern radar features 2 -> 7 (+5), display +1,
+          ground clutter +1, beam +1.
+
+
+  STEP 4  VERTICAL PROFILE VIEW                                 +2
+  ------------------------------------------------------------------
+  WHAT: a side view under the ND: distance ahead across, height up,
+        storms drawn in their colours, your plane and its path shown.
+  HOW:  cut the 3D box from step 3 along the track line (or along a
+        line the pilot picks). Needs step 3 first.
+  WHERE: display.py (new widget), main.py (place it on the screen).
+  CHECK: storm tops in the side view match the hail icon / storm top
+         labels; the freezing level line is drawn.
+  POINTS: modern radar features +2.
+
+
+  STEP 5  BEAM STABILISATION (PITCH AND ROLL)                   +2
+  ------------------------------------------------------------------
+  WHAT: a real antenna is kept level by the aircraft's attitude. Without
+        it, in a 30 deg bank one side of the beam points at the ground
+        and the other side over the storms.
+  HOW:  read /orientation/pitch-deg and /orientation/roll-deg from
+        FlightGear (fg_link.py). In scan(), the tilt of each ray becomes
+          tilt + pitch x cos(angle) + roll x sin(angle)   when stab OFF
+          tilt                                            when stab ON
+        Add a "STAB" checkbox (on by default, as on a real radar).
+  CHECK: STAB off and bank 30 deg: ground clutter on one side only;
+         STAB on: picture does not change in the turn.
+  POINTS: beam geometry 9 -> 10 (+1), display +1.
+
+
+  STEP 6  PHYSICAL GROUND CLUTTER + DOPPLER CLUTTER FILTER      +3
+  ------------------------------------------------------------------
+  WHAT: ground echo from the radar equation for a surface.
+  HOW:
+    1. sigma0 = gamma x sin(grazing angle)   ("constant gamma" model)
+         gamma: water about -30 dB (very weak), farmland about -15 dB,
+                city / mountains about -5 dB.
+       The grazing angle comes from the beam height and the terrain
+       slope (terrain.py already gives heights).
+    2. Ground power falls with range as 1/r^3 (not 1/r^2 like rain),
+       so far ground is weak, near ground is strong.
+    3. WX mode: Doppler ground clutter filter. The ground does not move
+       (only the plane's own speed along the beam), so most of it is
+       removed, about 20-30 dB less. MAP mode: no filter.
+  WHERE: radar.py scan() (the ground clutter part), terrain.py.
+  CHECK: tilt down in WX: much less clutter than before, mountains
+         still show; MAP: coastlines and cities sharp, water black.
+  POINTS: ground clutter / MAP 6 -> 9 (+3).
+
+
+  STEP 7  PWS DONE THE REAL WAY                                 +2
+  ------------------------------------------------------------------
+  HOW:
+    1. Use the radial speeds MEASURED in step 2 (with noise) for the
+       F-factor, not the model wind.
+    2. Take-off / landing rules: read airspeed, gear and flaps from
+       FlightGear:
+         - take-off: alerts off from 100 kt until 50 ft,
+         - landing: alerts off below 50 ft,
+         - landing: WARNING only within 1.5 NM (take-off: 3 NM).
+       Voice: "WINDSHEAR AHEAD" (take-off) / "GO AROUND, WINDSHEAR
+       AHEAD" (landing) / "MONITOR RADAR DISPLAY" (caution).
+    3. Reactive windshear: from the plane's own speed and climb rate,
+       compute F-factor where the plane IS. F >= 0.13 for a few
+       seconds -> "WINDSHEAR WINDSHEAR WINDSHEAR".
+  WHERE: radar.py windshear(), main.py (alerts), fg_link.py (gear,
+         flaps, airspeed).
+  POINTS: PWS 7.5 -> 9.5 (+2).
+
+
+  STEP 8  THREAT ICONS: STORM TOPS, LIGHTNING, OVERFLIGHT       +2
+  ------------------------------------------------------------------
+  HOW:
+    1. Storm top label: the highest point with 18 dBZ in a storm (from
+       the 3D box, or from the volume's top), shown as "+380" (38,000 ft
+       above you) or "-120" (below you).
+    2. Lightning icon: keep all FlightGear strikes of the last few
+       minutes (not only the last one); a storm with 3+ strikes gets
+       the lightning icon.
+    3. Predictive overflight: a storm under the path whose top is
+       within about 5,000 ft below you -> amber outline, "you may
+       fly into its top".
+  WHERE: main.py (keep strikes), display.py (icons), radar.py.
+  POINTS: hail / threat icons 7 -> 9 (+2).
+
+
+  STEP 9  dBZ FROM A RAIN RATE + RAYLEIGH SPECKLE               +2
+  ------------------------------------------------------------------
+  HOW:
+    1. Turn FlightGear rain 0..1 into a rain rate:
+         rain 0.1 = about 1 mm/h (light), 0.5 = about 10 mm/h,
+         1.0 = about 100 mm/h (violent storm core)
+       Then  Z = 200 x R^1.6  ->  dBZ = 10 x log10(Z).
+       (1 mm/h = 23 dBZ, 10 mm/h = 39 dBZ, 100 mm/h = 55 dBZ.)
+       to_dbz() then comes from physics, and the attenuation uses the
+       same rain rate, so both match.
+    2. Speckle: each range cell gets the AVERAGE of N random "fading"
+       samples (exponential power, N = number of pulses, about 16-32).
+       Weak echoes then flicker more than strong ones, as in real life.
+  WHERE: radar.py to_dbz(), scan() (speckle line).
+  POINTS: reflectivity physics 8 -> 9.5 (+1.5), attenuation +0.5.
+
+
+  TOTAL
+  -----
+    now                                     66
+    step 2  real Doppler                    +7
+    step 3  3D volume buffer + MultiScan    +8
+    step 4  vertical profile                +2
+    step 5  beam stabilisation              +2
+    step 6  physical ground clutter         +3
+    step 7  PWS the real way                +2
+    step 8  threat icons                    +2
+    step 9  rain rate + speckle             +2
+    ----------------------------------------------
+    total                                  ~94   (some steps overlap, so
+                                                  count on about 91, the
+                                                  "Can reach" total in
+                                                  section 3: still 90+)
+
+
+6. ORDER TO BUILD IT IN
+-----------------------
+  Some steps need others first:
+
+     step 2 (Doppler) ---------> step 7 (PWS the real way)
+     step 3 (3D buffer) -------> step 4 (vertical profile)
+                       \-------> step 8 (storm tops from the box)
+
+  Best order:
+    1. Step 2   Doppler          (biggest physics gain, unlocks step 7)
+    2. Step 3   3D buffer        (biggest feature gain, unlocks 4 and 8)
+    3. Step 6   ground clutter   (easy, uses the terrain already there)
+    4. Step 5   stabilisation    (easy, small)
+    5. Step 7   PWS
+    6. Step 4   vertical profile
+    7. Step 8   icons
+    8. Step 9   rain rate + speckle
+
+  After steps 2 + 3 the score is about 81. After 2, 3, 6, 5 about 86.
+  All steps: about 94.
+
+
+7. WHAT CHANGED IN THE CODE FOR STEP 1
+--------------------------------------
+  radar.py
+    SENS_DBZ_1NM = -24.0      weakest echo seen at 1 NM. Lower it (e.g.
+                              -30) for a more sensitive radar that sees
+                              light rain further; raise it for an older,
+                              weaker radar.
+    AZ_SIGMA_DEG              sideways beam width (from BEAM_WIDTH_DEG).
+    min_detectable_dbz(r)     the noise limit at range r.
+    _azimuth_smear()          averages each ray with its neighbours,
+                              weighted like the antenna.
+    scan()                    scans a few more rays each side (so the
+                              smearing has neighbours), smears rain,
+                              snow, ground and turbulence sideways after
+                              attenuation, then removes every echo that
+                              is below the noise.
+
+  Check (one storm, tilt +0.5, 20,000 ft):
+    - weak / light rain disappears beyond about 150-200 NM,
+    - a strong storm at 300 NM still shows, but only its core,
+    - a 4 NM storm at 120 NM looks about 11 deg wide instead of 4 deg.
+  Speed: a full sweep still takes well under half a second.

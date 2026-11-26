@@ -184,3 +184,20 @@ WHAT MORE FLIGHTGEAR CAN GIVE
  Lightning strikes                 ──────►  strong storm = more hail chance
  METAR "GR" / "GS"                 ──────►  hail reported (but not WHERE)
  hail itself                       ──────►  ❌ FlightGear has none
+
+
+ Echo above the freezing level:
+     ├─ app makes it 5× weaker (-7 dB), because it's ice   ✅ for both
+     │
+     ├─ still green/yellow  → snow (cyan if the training checkbox is on)
+     │
+     └─ still RED 4,600 ft+ above freezing, in a Cb storm
+                            → 🔻 HAIL ICON
+                              (red/magenta are never turned cyan, because
+                               a strong echo up there = hail, danger must show)
+
+
+
+
+
+                               
